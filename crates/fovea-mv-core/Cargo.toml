@@ -1,0 +1,19 @@
+[package]
+name = "fovea-mv-core"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "H.264 motion-vector parsing and trigger primitives. Core of the fovea-mv subproject."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true

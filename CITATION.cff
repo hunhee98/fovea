@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+title: Fovea
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: Lee
+    given-names: Hunhee
+repository-code: "https://github.com/hunheelee/fovea"
+license: Apache-2.0
+keywords:
+  - video
+  - vlm
+  - motion-vectors
+  - h264
+  - inference-infrastructure

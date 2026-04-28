@@ -1,0 +1,35 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "fovea-mv"
+version = "0.0.1"
+description = "H.264 motion-vector trigger engine. Decides which video frames deserve downstream VLM processing."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Hunhee Lee" }]
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Repository = "https://github.com/hunheelee/fovea"
+Issues = "https://github.com/hunheelee/fovea/issues"
+
+[tool.maturin]
+manifest-path = "../../crates/fovea-mv-py/Cargo.toml"
+module-name = "fovea_mv._fovea_mv"
+python-source = "python"
+features = ["pyo3/extension-module"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+strict = true

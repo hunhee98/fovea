@@ -1,0 +1,39 @@
+# Rust
+/target
+Cargo.lock.bak
+**/*.rs.bk
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Maturin
+*.whl
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Benchmark intermediates
+benchmarks/datasets/_downloaded/
+benchmarks/_runs/
+
+# Claude
+.claude/settings.local.json
+.claude/launch.json

@@ -1,0 +1,17 @@
+[package]
+name = "fovea-mv-stream"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Source adapters (file, RTSP, HTTP) for fovea-mv. Feeds packets into fovea-mv-core."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+fovea-mv-core = { path = "../fovea-mv-core", version = "0.0.1" }
+thiserror.workspace = true
+tracing.workspace = true
