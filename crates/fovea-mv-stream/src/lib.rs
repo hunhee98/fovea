@@ -44,6 +44,9 @@ pub enum SourceError {
     /// waiting for the next packet from a live source.
     #[error("live source read timed out")]
     ReadTimeout,
+    /// libde265 (HEVC backend) returned an error.
+    #[error("hevc backend error: {0}")]
+    Hevc(String),
 }
 
 /// Convenience alias.
@@ -140,16 +143,28 @@ impl Default for NetworkOptions {
     }
 }
 
+/// Decoder backend chosen at open time based on the input codec.
+///
+/// H.264 keeps its FFmpeg `+export_mvs` zero-decode-cost MV path. HEVC
+/// uses our vendored libde265 + `de265_internals` extension because
+/// FFmpeg upstream's HEVC decoder does not emit motion-vector side data.
+enum DecoderBackend {
+    H264(ffmpeg::decoder::Video),
+    Hevc(hevc::HevcDecoder),
+}
+
 /// FFmpeg-backed file source.
 ///
 /// Opens an `mp4` (or any libavformat-supported container) file, locates the
-/// best video stream, and prepares a decoder context.
+/// best video stream, and prepares a decoder context. The decoder may be
+/// FFmpeg's avcodec (H.264) or libde265 (HEVC) — see [`DecoderBackend`].
 pub struct FfmpegSource {
     input: Input,
     video_stream_idx: usize,
-    decoder: ffmpeg::decoder::Video,
+    backend: DecoderBackend,
     info: VideoInfo,
-    /// Reusable scratch frame; avoids per-packet allocation.
+    /// Reusable scratch frame; avoids per-packet allocation. Used only by
+    /// the H.264 backend.
     frame_scratch: VideoFrame,
     /// Reusable packet returned to caller; cleared each iteration.
     out_packet: MvPacket,
@@ -169,6 +184,16 @@ pub struct FfmpegSource {
     is_live: bool,
     /// Reconnect attempts already used.
     reconnects_used: u32,
+    /// Time-base of the selected stream. Reserved for future HEVC PTS
+    /// passthrough (libde265 forwards the `pts` argument from
+    /// `de265_push_data` to the decoded picture).
+    #[allow(dead_code)]
+    stream_time_base: (i32, i32),
+    /// Most recent inter-frame's PB info (HEVC) so we can defer copying
+    /// until `next_packet` returns the borrow.
+    hevc_scratch: Vec<hevc::PbInfo>,
+    /// Outcome of the last libde265 decode step's `more` flag.
+    last_hevc_more: Option<bool>,
 }
 
 /// Returns `true` if a URL refers to a live network source whose `EOF` should
@@ -180,6 +205,29 @@ fn is_live_scheme(input: &str) -> bool {
     ]
     .iter()
     .any(|prefix| lower.starts_with(prefix))
+}
+
+/// Convert an mp4 length-prefixed (`hvc1` / `avc1`) NAL chunk into
+/// Annex-B (start-code prefixed). If the input already starts with an
+/// Annex-B start code we pass it through unchanged.
+fn mp4_to_annexb_if_needed(input: &[u8]) -> Vec<u8> {
+    // Annex-B start codes: 00 00 00 01 or 00 00 01
+    if input.starts_with(&[0, 0, 0, 1]) || input.starts_with(&[0, 0, 1]) {
+        return input.to_vec();
+    }
+    let mut out = Vec::with_capacity(input.len() + 16);
+    let mut i = 0;
+    while i + 4 <= input.len() {
+        let nal_len = u32::from_be_bytes(input[i..i + 4].try_into().unwrap()) as usize;
+        i += 4;
+        if i + nal_len > input.len() {
+            break;
+        }
+        out.extend_from_slice(&[0, 0, 0, 1]);
+        out.extend_from_slice(&input[i..i + nal_len]);
+        i += nal_len;
+    }
+    out
 }
 
 /// `true` if the underlying error originated from the network layer (socket
@@ -276,43 +324,37 @@ impl FfmpegSource {
 
         let codec_params = stream.parameters();
         let codec_id = codec_params.id();
-        // Codec allowlist.
-        //
-        // Empirically, only H.264 has a working `+export_mvs` path in
-        // FFmpeg 8. We confirmed by running:
-        //
-        //     ffmpeg -flags2 +export_mvs -i clip.mp4 -vf showinfo -f null -
-        //
-        // on H.264 and HEVC clips of the same content. The H.264 decoder
-        // emits `side data - Motion vectors: (... bytes)` per inter
-        // frame; the HEVC decoder emits SEI side data only and never
-        // motion vectors, so a HEVC source would open but never produce
-        // a non-empty MvPacket. We refuse such sources up front to avoid
-        // a misleading "trigger never fires" failure mode.
-        //
-        // If you have an HEVC stream, transcode it to H.264 first:
-        //
-        //     ffmpeg -i input.mp4 -c:v libx264 -preset fast -crf 23 -an out.mp4
-        if codec_id != ffmpeg::codec::Id::H264 {
-            return Err(SourceError::UnsupportedCodec(codec_id));
-        }
-
-        let mut context = ffmpeg::codec::context::Context::from_parameters(codec_params)?;
-        // Enable motion-vector export as side data + apply opt-in skip flags.
-        // Must be set before opening the decoder (avcodec_open2).
-        // SAFETY: as_mut_ptr returns the live AVCodecContext owned by `context`.
-        // We only set scalar fields; no aliasing or lifetime extension.
-        unsafe {
-            let raw = context.as_mut_ptr();
-            (*raw).flags2 |= ffmpeg_sys_next::AV_CODEC_FLAG2_EXPORT_MVS;
-            if opts.skip_loop_filter_all {
-                (*raw).skip_loop_filter = ffmpeg_sys_next::AVDiscard::AVDISCARD_ALL;
+        // Codec allowlist:
+        // - H.264: FFmpeg `+export_mvs` side-data path.
+        // - HEVC : libde265 + `de265_internals` (vendored). FFmpeg
+        //          upstream does not expose HEVC MVs.
+        // Other codecs (VP9, AV1, MPEG-4, ...) are rejected up front.
+        let backend = match codec_id {
+            ffmpeg::codec::Id::H264 => {
+                let mut context = ffmpeg::codec::context::Context::from_parameters(codec_params.clone())?;
+                // Enable motion-vector export as side data + apply opt-in
+                // skip flags. Must be set before opening the decoder.
+                // SAFETY: as_mut_ptr returns the live AVCodecContext owned
+                // by `context`; we only set scalar fields.
+                unsafe {
+                    let raw = context.as_mut_ptr();
+                    (*raw).flags2 |= ffmpeg_sys_next::AV_CODEC_FLAG2_EXPORT_MVS;
+                    if opts.skip_loop_filter_all {
+                        (*raw).skip_loop_filter = ffmpeg_sys_next::AVDiscard::AVDISCARD_ALL;
+                    }
+                    if opts.skip_idct_all {
+                        (*raw).skip_idct = ffmpeg_sys_next::AVDiscard::AVDISCARD_ALL;
+                    }
+                }
+                DecoderBackend::H264(context.decoder().video()?)
             }
-            if opts.skip_idct_all {
-                (*raw).skip_idct = ffmpeg_sys_next::AVDiscard::AVDISCARD_ALL;
+            ffmpeg::codec::Id::HEVC => {
+                let dec = hevc::HevcDecoder::new()
+                    .map_err(|_| SourceError::Hevc(String::from("libde265 init failed")))?;
+                DecoderBackend::Hevc(dec)
             }
-        }
-        let decoder = context.decoder().video()?;
+            _ => return Err(SourceError::UnsupportedCodec(codec_id)),
+        };
 
         let frame_rate = stream.avg_frame_rate();
         let time_base = stream.time_base();
@@ -323,10 +365,26 @@ impl FfmpegSource {
         let nb = stream.frames();
         let nb_frames_hint = if nb > 0 { Some(nb) } else { None };
 
+        // Width/height: come from the H.264 decoder context, or for HEVC
+        // are read from the codec parameters at open time. ffmpeg-next
+        // doesn't expose width/height on `Parameters` directly, so we
+        // reach into the raw AVCodecParameters.
+        let (width, height) = match &backend {
+            DecoderBackend::H264(d) => (d.width(), d.height()),
+            DecoderBackend::Hevc(_) => {
+                // SAFETY: codec_params is alive; raw pointer accesses
+                // the immutable AVCodecParameters fields width/height.
+                let raw = unsafe { codec_params.as_ptr() };
+                let w = unsafe { (*raw).width as u32 };
+                let h = unsafe { (*raw).height as u32 };
+                (w, h)
+            }
+        };
+
         let info = VideoInfo {
             codec: codec_id,
-            width: decoder.width(),
-            height: decoder.height(),
+            width,
+            height,
             frame_rate: (frame_rate.numerator(), frame_rate.denominator()),
             time_base: (time_base.numerator(), time_base.denominator()),
             duration_us,
@@ -336,7 +394,7 @@ impl FfmpegSource {
         Ok(Self {
             input,
             video_stream_idx,
-            decoder,
+            backend,
             info,
             frame_scratch: VideoFrame::empty(),
             out_packet: MvPacket::empty(),
@@ -348,6 +406,9 @@ impl FfmpegSource {
             saved_decoder: *opts,
             is_live: is_live_scheme(input_str),
             reconnects_used: 0,
+            stream_time_base: (time_base.numerator(), time_base.denominator()),
+            hevc_scratch: Vec::new(),
+            last_hevc_more: None,
         })
     }
 
@@ -387,22 +448,27 @@ impl FfmpegSource {
     /// The borrowed [`MvPacket`] is a view into a buffer reused on the next
     /// call. Clone if you need to keep it.
     pub fn next_packet(&mut self) -> Result<Option<&MvPacket>> {
+        match &mut self.backend {
+            DecoderBackend::H264(_) => self.next_packet_h264(),
+            DecoderBackend::Hevc(_) => self.next_packet_hevc(),
+        }
+    }
+
+    fn next_packet_h264(&mut self) -> Result<Option<&MvPacket>> {
         loop {
+            let dec = match &mut self.backend {
+                DecoderBackend::H264(d) => d,
+                _ => unreachable!(),
+            };
             // 1) Try to receive an already-decoded frame.
-            match self.decoder.receive_frame(&mut self.frame_scratch) {
+            match dec.receive_frame(&mut self.frame_scratch) {
                 Ok(()) => {
                     populate_packet(&mut self.out_packet, &self.frame_scratch, &self.info);
                     return Ok(Some(&self.out_packet));
                 }
-                Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => {
-                    // Need more input.
-                }
+                Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => {}
                 Err(ffmpeg::Error::Eof) => {
                     if self.is_live {
-                        // For live sources, EOF on the decoder side after we
-                        // told it to flush means the upstream demuxer also
-                        // stopped producing — treat as a disconnect that
-                        // reconnect can recover from.
                         match self.try_reconnect_if_live() {
                             Ok(true) => continue,
                             Ok(false) => return Err(SourceError::Disconnected),
@@ -414,7 +480,6 @@ impl FfmpegSource {
                 Err(e) => return Err(self.classify_decoder_error(e)),
             }
 
-            // 2) Feed more input. After EOF, send a flush (None) once.
             if self.drained {
                 if self.is_live {
                     match self.try_reconnect_if_live() {
@@ -430,19 +495,137 @@ impl FfmpegSource {
             match next_pkt.read(&mut self.input) {
                 Ok(()) => {
                     if next_pkt.stream() == self.video_stream_idx {
-                        self.decoder.send_packet(&next_pkt)?;
+                        if let DecoderBackend::H264(d) = &mut self.backend {
+                            d.send_packet(&next_pkt)?;
+                        }
                     } else {
-                        // Non-video packet: skip and try reading another.
                         continue;
                     }
                 }
                 Err(ffmpeg::Error::Eof) => {
-                    self.decoder.send_eof()?;
+                    if let DecoderBackend::H264(d) = &mut self.backend {
+                        d.send_eof()?;
+                    }
                     self.drained = true;
                 }
                 Err(e) => return Err(self.classify_demuxer_error(e)),
             }
         }
+    }
+
+    fn next_packet_hevc(&mut self) -> Result<Option<&MvPacket>> {
+        loop {
+            // 1) Try to pull a frame, populating in-place if present.
+            let got = self.try_pull_hevc_frame()?;
+            if let Some(()) = got {
+                return Ok(Some(&self.out_packet));
+            }
+
+            if self.drained {
+                // Final pass: if the previous pull saw `more == false`,
+                // there is nothing more to produce.
+                let more = self.last_hevc_more.unwrap_or(false);
+                if !more {
+                    return Ok(None);
+                }
+            }
+
+            // 2) Need more input. Read next FFmpeg packet, convert from
+            // mp4 length-prefix to Annex-B if necessary, push to libde265.
+            let mut next_pkt = ffmpeg::Packet::empty();
+            match next_pkt.read(&mut self.input) {
+                Ok(()) => {
+                    if next_pkt.stream() != self.video_stream_idx {
+                        continue;
+                    }
+                    let bytes = match next_pkt.data() {
+                        Some(d) => d,
+                        None => continue,
+                    };
+                    let annexb = mp4_to_annexb_if_needed(bytes);
+                    if let DecoderBackend::Hevc(d) = &mut self.backend {
+                        d.push(&annexb)
+                            .map_err(|e| SourceError::Hevc(format!("{e}")))?;
+                    }
+                }
+                Err(ffmpeg::Error::Eof) => {
+                    if let DecoderBackend::Hevc(d) = &mut self.backend {
+                        d.flush()
+                            .map_err(|e| SourceError::Hevc(format!("{e}")))?;
+                    }
+                    self.drained = true;
+                }
+                Err(e) => return Err(self.classify_demuxer_error(e)),
+            }
+        }
+    }
+
+    /// Single libde265 step. If a frame is produced, fully populate
+    /// `self.out_packet` from the borrow before it expires.
+    fn try_pull_hevc_frame(&mut self) -> Result<Option<()>> {
+        let dec = match &mut self.backend {
+            DecoderBackend::Hevc(d) => d,
+            _ => unreachable!(),
+        };
+        let (more, frame_opt) = dec
+            .decode_step()
+            .map_err(|e| SourceError::Hevc(format!("{e}")))?;
+        self.last_hevc_more = Some(more);
+
+        let Some(frame) = frame_opt else {
+            return Ok(None);
+        };
+
+        let (pb_w, _pb_h, log2u) = frame.pb_layout();
+        let pixels_per_unit = 1u32 << log2u;
+        self.hevc_scratch.clear();
+        self.hevc_scratch.extend(frame.pb_info());
+
+        self.out_packet.clear();
+        // libde265 PTS pass-through: we never set PTS on push, so this is
+        // 0. v1 leaves ts_us = 0 and lets the user detect HEVC by
+        // inspecting `info().codec`.
+        self.out_packet.ts_us = 0;
+        let any_motion = self.hevc_scratch.iter().any(|c| c.has_motion());
+        self.out_packet.frame_type = if any_motion {
+            FrameType::P
+        } else {
+            FrameType::I
+        };
+
+        let mb_w = self.info.width.div_ceil(16);
+        let mb_h = self.info.height.div_ceil(16);
+        self.out_packet.total_mb = mb_w.saturating_mul(mb_h);
+
+        let mut intra_pixels: u64 = 0;
+        for (idx, pb) in self.hevc_scratch.iter().enumerate() {
+            let cx = ((idx as u32) % pb_w) * pixels_per_unit;
+            let cy = ((idx as u32) / pb_w) * pixels_per_unit;
+            if pb.ref_poc0 != -1 {
+                self.out_packet.mvs.push(MotionVector {
+                    w: pixels_per_unit as u8,
+                    h: pixels_per_unit as u8,
+                    src_x: cx as i16,
+                    src_y: cy as i16,
+                    dst_x: cx as i16,
+                    dst_y: cy as i16,
+                    motion_x: pb.mv0_x as i32,
+                    motion_y: pb.mv0_y as i32,
+                    motion_scale: 4,
+                    source: -1,
+                });
+            } else {
+                intra_pixels += (pixels_per_unit as u64) * (pixels_per_unit as u64);
+            }
+        }
+
+        if matches!(self.out_packet.frame_type, FrameType::I) {
+            self.out_packet.intra_count = self.out_packet.total_mb;
+        } else {
+            let intra_mb = (intra_pixels / 256) as u32;
+            self.out_packet.intra_count = intra_mb.min(self.out_packet.total_mb);
+        }
+        Ok(Some(()))
     }
 
     /// Map a decoder-side ffmpeg error into our [`SourceError`]. For live
@@ -494,9 +677,13 @@ impl FfmpegSource {
         self.video_stream_idx
     }
 
-    /// Borrow the underlying decoder. Exposed for step 2.3+.
-    pub fn decoder(&self) -> &ffmpeg::decoder::Video {
-        &self.decoder
+    /// Borrow the underlying H.264 FFmpeg decoder, if present. Returns
+    /// `None` for HEVC (libde265) sources.
+    pub fn h264_decoder(&self) -> Option<&ffmpeg::decoder::Video> {
+        match &self.backend {
+            DecoderBackend::H264(d) => Some(d),
+            DecoderBackend::Hevc(_) => None,
+        }
     }
 
     /// Borrow the underlying input context.
@@ -530,12 +717,20 @@ impl FfmpegSource {
     ///
     /// Returns an error if no frame has been decoded yet, or if scaling fails.
     pub fn last_frame_rgb(&mut self) -> Result<Vec<u8>> {
-        let w = self.decoder.width();
-        let h = self.decoder.height();
+        let dec = match &self.backend {
+            DecoderBackend::H264(d) => d,
+            DecoderBackend::Hevc(_) => {
+                return Err(SourceError::Hevc(String::from(
+                    "RGB decode not yet wired up for HEVC sources",
+                )))
+            }
+        };
+        let w = dec.width();
+        let h = dec.height();
         if w == 0 || h == 0 {
             return Err(SourceError::Ffmpeg(ffmpeg::Error::InvalidData));
         }
-        let src_format = self.decoder.format();
+        let src_format = dec.format();
         if src_format == Pixel::None {
             return Err(SourceError::Ffmpeg(ffmpeg::Error::InvalidData));
         }

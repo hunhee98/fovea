@@ -5,7 +5,13 @@
 //! HEVC stream. H.264 keeps its FFmpeg `+export_mvs` path (zero-decode
 //! cost) — see the rest of `lib.rs`.
 
-#![allow(non_camel_case_types, non_snake_case, dead_code)]
+#![allow(
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals,
+    dead_code,
+    missing_docs
+)]
 
 use std::ffi::CStr;
 use std::ptr::NonNull;
@@ -100,14 +106,20 @@ impl HevcDecoder {
         let mut more: i32 = 0;
         // SAFETY: handle valid; `more` is an out-param scalar.
         let err = unsafe { ffi::de265_decode(self.ctx.as_ptr(), &mut more as *mut _) };
-        check(err)?;
+        // DE265_ERROR_WAITING_FOR_INPUT_DATA is libde265's polite way of
+        // saying "feed me more bytes" — not a hard failure. Treat it as a
+        // valid "no progress yet" outcome.
+        if err != ffi::de265_error_DE265_OK
+            && err != ffi::de265_error_DE265_ERROR_WAITING_FOR_INPUT_DATA
+        {
+            check(err)?;
+        }
         // SAFETY: picture borrows from the decoder; lifetime is bounded
         // by the next decode_step call (which may free the picture).
         let pic = unsafe { ffi::de265_get_next_picture(self.ctx.as_ptr()) };
         if pic.is_null() {
             Ok((more != 0, None))
         } else {
-            // The borrow lifetime is tied to &mut self for safety.
             // SAFETY: pic is non-null and valid until the next decode_step.
             let frame = unsafe { DecodedFrame::from_raw(pic) };
             Ok((true, Some(frame)))
@@ -191,7 +203,12 @@ impl<'a> DecodedFrame<'a> {
 }
 
 fn check(err: ffi::de265_error) -> HevcResult<()> {
-    if err == ffi::de265_error_DE265_OK {
+    // libde265 distinguishes hard errors (< DE265_OK) from soft warnings
+    // (>= 1000). The standard idiom is `de265_isOK(err)` which is true
+    // for both OK and any warning. Warnings during decode (e.g. "decoder
+    // stalled" while waiting for more bytes) must not abort the stream.
+    let ok = unsafe { ffi::de265_isOK(err) };
+    if ok != 0 {
         Ok(())
     } else {
         // SAFETY: de265_get_error_text returns a pointer to static
