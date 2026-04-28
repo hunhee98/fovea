@@ -19,6 +19,9 @@ ffmpeg-next.workspace = true
 ffmpeg-sys-next.workspace = true
 libc = "0.2"
 
+[build-dependencies]
+bindgen = "0.70"
+
 [dev-dependencies]
 anyhow.workspace = true
 criterion.workspace = true

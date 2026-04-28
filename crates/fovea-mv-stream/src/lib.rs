@@ -9,6 +9,8 @@
 
 #![warn(missing_docs)]
 
+pub mod hevc;
+
 use std::path::Path;
 
 use ffmpeg_next as ffmpeg;
@@ -274,7 +276,23 @@ impl FfmpegSource {
 
         let codec_params = stream.parameters();
         let codec_id = codec_params.id();
-        // Step 2 only wires up H.264. Other codecs surface explicitly.
+        // Codec allowlist.
+        //
+        // Empirically, only H.264 has a working `+export_mvs` path in
+        // FFmpeg 8. We confirmed by running:
+        //
+        //     ffmpeg -flags2 +export_mvs -i clip.mp4 -vf showinfo -f null -
+        //
+        // on H.264 and HEVC clips of the same content. The H.264 decoder
+        // emits `side data - Motion vectors: (... bytes)` per inter
+        // frame; the HEVC decoder emits SEI side data only and never
+        // motion vectors, so a HEVC source would open but never produce
+        // a non-empty MvPacket. We refuse such sources up front to avoid
+        // a misleading "trigger never fires" failure mode.
+        //
+        // If you have an HEVC stream, transcode it to H.264 first:
+        //
+        //     ffmpeg -i input.mp4 -c:v libx264 -preset fast -crf 23 -an out.mp4
         if codec_id != ffmpeg::codec::Id::H264 {
             return Err(SourceError::UnsupportedCodec(codec_id));
         }

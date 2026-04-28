@@ -51,3 +51,6 @@ benchmarks/datasets/**/*.h265
 .env.*
 !.env.example
 .claude/scheduled_tasks.lock
+
+# Vendored libraries — commit source, not build artifacts.
+vendor/libde265/build/

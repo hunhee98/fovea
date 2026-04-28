@@ -1,0 +1,33 @@
+name: build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        env:
+          - { CC: "gcc", CXX: "g++" }
+          - { CC: "clang", CXX: "clang++" }
+    env: ${{ matrix.env }}
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd #v6.0.2
+
+    - name: Checkout sample streams
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd #v6.0.2
+      with:
+        repository: strukturag/libde265-data
+        path: libde265-data
+
+    - name: Install dependencies
+      run: |
+        ./scripts/ci-before-install-linux.sh
+
+    - name: Prepare CI
+      run: |
+        ./scripts/ci-before-script.sh
+
+    - name: Run tests
+      run: |
+        ./scripts/ci-run.sh
