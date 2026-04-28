@@ -60,3 +60,8 @@ _soak/
 # Recreated per-machine; not part of the public API.
 scripts/start-soak.sh
 scripts/soak.py
+
+# Local-only working notes — Claude Code config + planning docs.
+# Kept out of the public repo on purpose.
+.claude/
+docs/05.exec-plans/
