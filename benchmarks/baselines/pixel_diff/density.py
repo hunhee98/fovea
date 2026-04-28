@@ -308,16 +308,31 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     hardware = _hardware_line()
+    # Reuse the macmon helper from benchmarks/runners/env.py without
+    # forcing the pixel-diff baseline to depend on that package — fall
+    # back silently if the import fails.
+    try:
+        from benchmarks.runners.env import macmon_sample, macmon_summary
+    except ImportError:
+        def macmon_sample(*_, **__): return None  # type: ignore[no-redef]
+        def macmon_summary(*_, **__): return ""   # type: ignore[no-redef]
+    macmon_pre = macmon_sample()
+    pre_summary = macmon_summary(macmon_pre)
     print(f"hardware: {hardware}")
     print(f"source:   {src} ({src.stat().st_size / (1024 * 1024):.1f} MB)")
     print(f"params:   duration={args.duration_s}s threshold={args.threshold:.0f}")
+    if pre_summary:
+        print(f"thermals (pre-run): {pre_summary}")
     print()
-    print(f"{'streams':>8} | {'cpu%(flat)':>10} | {'cpu%(rt est)':>12} | {'thrput x':>8} | {'rss MB':>7} | {'fires':>5}")
-    print("-" * 70)
+    print(f"{'streams':>8} | {'cpu%(flat)':>10} | {'cpu%(rt est)':>12} | {'thrput x':>8} | {'rss MB':>7} | {'fires':>5} | {'thermals':>30}")
+    print("-" * 100)
 
     results: list[StageResult] = []
+    macmon_per_stage: list[dict | None] = []
     for n in stages:
         r = run_stage(str(src), n, args.duration_s, args.threshold)
+        post = macmon_sample()
+        macmon_per_stage.append(post)
         results.append(r)
         print(
             f"{r.n_streams:>8} | "
@@ -325,7 +340,8 @@ def main() -> int:
             f"{r.cpu_realtime_per_stream:>12.1f} | "
             f"{r.throughput_x:>8.2f} | "
             f"{r.rss_mean_per_stream_mb:>7.1f} | "
-            f"{r.fires_per_stream:>5.0f}"
+            f"{r.fires_per_stream:>5.0f} | "
+            f"{macmon_summary(post):>30}"
         )
 
     summary = {
@@ -334,6 +350,8 @@ def main() -> int:
         "duration_s": args.duration_s,
         "threshold": args.threshold,
         "stages": [dataclasses.asdict(r) for r in results],
+        "macmon_pre": macmon_pre,
+        "macmon_per_stage": macmon_per_stage,
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     print(f"\nsummary: {out_dir / 'summary.json'}")

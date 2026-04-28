@@ -37,7 +37,7 @@ import psutil
 
 from fovea_mv import IntervalTrigger, MotionTrigger, Stream
 
-from .env import RUNS_DIR
+from .env import RUNS_DIR, macmon_sample, macmon_summary
 
 
 # ---------------------------------------------------------------------------
@@ -297,14 +297,19 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     hardware = _hardware_line()
+    macmon_pre = macmon_sample()
+    pre_summary = macmon_summary(macmon_pre)
     print(f"hardware: {hardware}")
     print(f"source:   {src} ({src.stat().st_size / (1024 * 1024):.1f} MB)")
     print(f"params:   duration={args.duration_s}s motion_th={args.motion_threshold} interval={args.interval_ms}ms")
+    if pre_summary:
+        print(f"thermals (pre-run): {pre_summary}")
     print()
-    print(f"{'streams':>8} | {'cpu%(flat)':>10} | {'cpu%(rt est)':>12} | {'thrput x':>8} | {'rss MB':>7}")
-    print("-" * 60)
+    print(f"{'streams':>8} | {'cpu%(flat)':>10} | {'cpu%(rt est)':>12} | {'thrput x':>8} | {'rss MB':>7} | {'thermals':>30}")
+    print("-" * 90)
 
     results: list[StageResult] = []
+    macmon_per_stage: list[dict | None] = []
     for n in stages:
         r = run_stage(
             str(src),
@@ -313,13 +318,18 @@ def main() -> int:
             args.motion_threshold,
             args.interval_ms,
         )
+        # Sample macmon right after the stage finishes — captures the
+        # thermal state the stage drove the box to. Cheap (one CLI call).
+        post = macmon_sample()
+        macmon_per_stage.append(post)
         results.append(r)
         print(
             f"{r.n_streams:>8} | "
             f"{r.cpu_mean_per_stream:>10.1f} | "
             f"{r.cpu_realtime_per_stream:>12.1f} | "
             f"{r.throughput_x:>8.1f} | "
-            f"{r.rss_mean_per_stream_mb:>7.1f}"
+            f"{r.rss_mean_per_stream_mb:>7.1f} | "
+            f"{macmon_summary(post):>30}"
         )
 
     print()
@@ -335,6 +345,8 @@ def main() -> int:
         "motion_threshold": args.motion_threshold,
         "interval_ms": args.interval_ms,
         "stages": [dataclasses.asdict(r) for r in results],
+        "macmon_pre": macmon_pre,
+        "macmon_per_stage": macmon_per_stage,
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     print()
