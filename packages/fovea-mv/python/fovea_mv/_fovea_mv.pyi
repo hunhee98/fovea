@@ -80,5 +80,16 @@ class Stream:
     def __init__(self, path: str, *, fast_decode: bool = False) -> None: ...
     @classmethod
     def from_file(cls, path: str, *, fast_decode: bool = False) -> Stream: ...
+    @classmethod
+    def from_url(
+        cls,
+        url: str,
+        *,
+        transport: str = "tcp",
+        open_timeout_s: float = 5.0,
+        read_timeout_s: float = 5.0,
+        max_reconnects: int = 0,
+        fast_decode: bool = False,
+    ) -> Stream: ...
     def info(self) -> VideoInfo: ...
     def events(self, triggers: Sequence[Trigger]) -> EventIterator: ...

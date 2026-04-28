@@ -125,6 +125,45 @@ def test_fast_decode_kwarg_accepted() -> None:
     assert a == b, f"event count diverged: default={a}, fast={b}"
 
 
+def test_from_url_with_file_protocol_iterates() -> None:
+    """`Stream.from_url('file://...')` opens and iterates a local clip."""
+    path = _require_sample()
+    abs_path = path.resolve()
+    url = f"file://{abs_path}"
+    s = Stream.from_url(url)
+    info = s.info()
+    assert info.width == 1080
+    assert info.height == 1920
+    n = sum(1 for _ in s.events([IntervalTrigger(60_000)]))
+    assert n >= 1
+
+
+def test_from_url_invalid_rtsp_raises_quickly() -> None:
+    """Unroutable RTSP host raises within ~5s of the open_timeout."""
+    import time as _time
+
+    start = _time.time()
+    with pytest.raises((RuntimeError, ConnectionError, TimeoutError)):
+        Stream.from_url(
+            "rtsp://192.0.2.1:554/cam",  # TEST-NET-1, unroutable
+            transport="tcp",
+            open_timeout_s=0.5,
+            read_timeout_s=0.5,
+        )
+    elapsed = _time.time() - start
+    assert elapsed < 5.0, f"open took {elapsed:.1f}s — open_timeout not honored?"
+
+
+def test_from_url_rejects_unknown_transport() -> None:
+    with pytest.raises(ValueError):
+        Stream.from_url("file:///tmp/x.mp4", transport="quic")
+
+
+def test_from_url_rejects_negative_timeout() -> None:
+    with pytest.raises(ValueError):
+        Stream.from_url("file:///tmp/x.mp4", open_timeout_s=-1.0)
+
+
 def test_region_mask_filters() -> None:
     """Mask covering ~nothing (1×1 pixel) should suppress the motion trigger."""
     path = _require_sample()

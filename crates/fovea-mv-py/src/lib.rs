@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use numpy::ndarray::Array3;
 use numpy::{IntoPyArray, PyArray3};
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyConnectionError, PyRuntimeError, PyTimeoutError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 
@@ -18,11 +18,15 @@ use fovea_mv_core::triggers::{
     SceneChangeTrigger as RsSceneChangeTrigger,
 };
 use fovea_mv_core::Trigger as RsTrigger;
-use fovea_mv_stream::{FfmpegSource, OpenOptions};
+use fovea_mv_stream::{FfmpegSource, NetworkOptions, OpenOptions, RtspTransport, SourceError};
 
-/// Convert a fovea-mv-stream error into a Python `RuntimeError`.
-fn err_to_py(e: fovea_mv_stream::SourceError) -> PyErr {
-    PyRuntimeError::new_err(format!("{e}"))
+/// Convert a fovea-mv-stream error into the most idiomatic Python exception.
+fn err_to_py(e: SourceError) -> PyErr {
+    match e {
+        SourceError::ReadTimeout => PyTimeoutError::new_err("live source read timed out"),
+        SourceError::Disconnected => PyConnectionError::new_err("live source disconnected"),
+        other => PyRuntimeError::new_err(format!("{other}")),
+    }
 }
 
 /// Internal handle to a trigger boxed as a trait object.
@@ -399,6 +403,58 @@ impl PyStream {
     #[pyo3(signature = (path, *, fast_decode = false))]
     fn from_file(_cls: &Bound<'_, PyType>, path: PathBuf, fast_decode: bool) -> PyResult<Self> {
         Self::new(path, fast_decode)
+    }
+
+    /// Open a URL (rtsp://, rtsps://, rtmp://, http(s)://, file://, ...).
+    ///
+    /// On a live source (rtsp / rtmp / srt / udp / rtp), `next_packet` raises
+    /// `ConnectionError` on disconnect and `TimeoutError` on read timeout.
+    /// `max_reconnects > 0` enables automatic reopen on those errors.
+    #[classmethod]
+    #[pyo3(signature = (
+        url, *,
+        transport = "tcp",
+        open_timeout_s = 5.0,
+        read_timeout_s = 5.0,
+        max_reconnects = 0u32,
+        fast_decode = false,
+    ))]
+    fn from_url(
+        _cls: &Bound<'_, PyType>,
+        url: &str,
+        transport: &str,
+        open_timeout_s: f64,
+        read_timeout_s: f64,
+        max_reconnects: u32,
+        fast_decode: bool,
+    ) -> PyResult<Self> {
+        let transport = match transport.to_ascii_lowercase().as_str() {
+            "tcp" => RtspTransport::Tcp,
+            "udp" => RtspTransport::Udp,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown transport {other:?}; expected 'tcp' or 'udp'"
+                )))
+            }
+        };
+        if open_timeout_s < 0.0 || read_timeout_s < 0.0 {
+            return Err(PyValueError::new_err("timeouts must be non-negative"));
+        }
+        let net = NetworkOptions {
+            transport,
+            open_timeout_ms: (open_timeout_s * 1000.0) as u32,
+            read_timeout_ms: (read_timeout_s * 1000.0) as u32,
+            max_reconnects,
+        };
+        let dec = OpenOptions {
+            skip_loop_filter_all: fast_decode,
+            skip_idct_all: fast_decode,
+        };
+        let src = FfmpegSource::open_url_with(url, net, dec).map_err(err_to_py)?;
+        Ok(Self {
+            source: Arc::new(Mutex::new(src)),
+            current_seq: Arc::new(Mutex::new(0)),
+        })
     }
 
     /// Read-only metadata.
