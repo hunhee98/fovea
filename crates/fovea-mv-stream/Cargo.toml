@@ -17,6 +17,7 @@ thiserror.workspace = true
 tracing.workspace = true
 ffmpeg-next.workspace = true
 ffmpeg-sys-next.workspace = true
+libc = "0.2"
 
 [dev-dependencies]
 anyhow.workspace = true

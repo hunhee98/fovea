@@ -33,6 +33,15 @@ pub enum SourceError {
     /// Codec is not supported (currently only H.264 is wired up).
     #[error("unsupported codec: {0:?}")]
     UnsupportedCodec(ffmpeg::codec::Id),
+    /// A live source (RTSP / RTMP / SRT / RTP / UDP) reached EOF or its
+    /// connection was reset. For file inputs, end-of-stream is reported as
+    /// `Ok(None)` from `next_packet` and never as this variant.
+    #[error("live source disconnected")]
+    Disconnected,
+    /// Underlying I/O exceeded the configured `read_timeout_ms` while
+    /// waiting for the next packet from a live source.
+    #[error("live source read timed out")]
+    ReadTimeout,
 }
 
 /// Convenience alias.
@@ -148,6 +157,58 @@ pub struct FfmpegSource {
     rgb_scaler: Option<Scaler>,
     /// Reusable RGB destination frame.
     rgb_frame: VideoFrame,
+    /// Original input string (URL or path). Required for reconnect.
+    saved_input: String,
+    /// Network options carried for reconnect.
+    saved_network: NetworkOptions,
+    /// Decoder options carried for reconnect.
+    saved_decoder: OpenOptions,
+    /// `true` if the input scheme implies a continuous network stream.
+    is_live: bool,
+    /// Reconnect attempts already used.
+    reconnects_used: u32,
+}
+
+/// Returns `true` if a URL refers to a live network source whose `EOF` should
+/// be treated as a disconnect rather than end-of-stream.
+fn is_live_scheme(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    [
+        "rtsp://", "rtsps://", "rtmp://", "rtmps://", "srt://", "udp://", "rtp://",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+}
+
+/// `true` if the underlying error originated from the network layer (socket
+/// reset, host unreachable, etc.).
+fn is_network_class_error(e: &ffmpeg::Error) -> bool {
+    use ffmpeg::Error::*;
+    matches!(
+        e,
+        Other { errno } if matches!(
+            *errno,
+            // POSIX network errors libavformat surfaces verbatim
+            libc::ECONNREFUSED
+                | libc::ECONNRESET
+                | libc::ECONNABORTED
+                | libc::EHOSTUNREACH
+                | libc::ENETUNREACH
+                | libc::ENETRESET
+                | libc::ENOTCONN
+                | libc::EPIPE
+                | libc::EIO,
+        )
+    )
+}
+
+/// `true` for the "operation timed out" family.
+fn is_timeout_error(e: &ffmpeg::Error) -> bool {
+    use ffmpeg::Error::*;
+    matches!(
+        e,
+        Other { errno } if matches!(*errno, libc::ETIMEDOUT | libc::EAGAIN)
+    )
 }
 
 impl FfmpegSource {
@@ -158,13 +219,15 @@ impl FfmpegSource {
 
     /// Open a file with explicit decoder options.
     pub fn open_file_with(path: impl AsRef<Path>, opts: OpenOptions) -> Result<Self> {
-        Self::open_input(path.as_ref(), &NetworkOptions::default(), &opts)
+        let p = path.as_ref();
+        let s = p
+            .to_str()
+            .ok_or(SourceError::Ffmpeg(ffmpeg::Error::InvalidData))?;
+        Self::open_input(s, &NetworkOptions::default(), &opts)
     }
 
     /// Open any libavformat-supported URL. Accepts `rtsp://`, `rtsps://`,
     /// `http(s)://`, `file://`, and bare paths.
-    ///
-    /// `network` is currently a stub; option fields land in step 002.2.
     pub fn open_url(url: &str, network: NetworkOptions) -> Result<Self> {
         Self::open_url_with(url, network, OpenOptions::default())
     }
@@ -175,11 +238,11 @@ impl FfmpegSource {
         network: NetworkOptions,
         decoder: OpenOptions,
     ) -> Result<Self> {
-        Self::open_input(Path::new(url), &network, &decoder)
+        Self::open_input(url, &network, &decoder)
     }
 
     fn open_input(
-        input_ref: &Path,
+        input_str: &str,
         network: &NetworkOptions,
         opts: &OpenOptions,
     ) -> Result<Self> {
@@ -201,7 +264,7 @@ impl FfmpegSource {
         let timeout_str = open_timeout_us.to_string();
         dict.set("timeout", &timeout_str);
 
-        let input = ffmpeg::format::input_with_dictionary(input_ref, dict)?;
+        let input = ffmpeg::format::input_with_dictionary(Path::new(input_str), dict)?;
 
         let stream = input
             .streams()
@@ -262,7 +325,40 @@ impl FfmpegSource {
             drained: false,
             rgb_scaler: None,
             rgb_frame: VideoFrame::empty(),
+            saved_input: input_str.to_string(),
+            saved_network: network.clone(),
+            saved_decoder: *opts,
+            is_live: is_live_scheme(input_str),
+            reconnects_used: 0,
         })
+    }
+
+    /// `true` when the source was opened against a live network protocol
+    /// (RTSP, RTMP, SRT, RTP, UDP). For these, EOF from the demuxer is
+    /// reported as [`SourceError::Disconnected`] rather than `Ok(None)`.
+    pub fn is_live(&self) -> bool {
+        self.is_live
+    }
+
+    /// Number of automatic reconnect attempts already used.
+    pub fn reconnects_used(&self) -> u32 {
+        self.reconnects_used
+    }
+
+    /// Close the current input + decoder and reopen using the saved URL and
+    /// options. Counts against `max_reconnects`.
+    fn reconnect(&mut self) -> Result<()> {
+        if self.reconnects_used >= self.saved_network.max_reconnects {
+            return Err(SourceError::Disconnected);
+        }
+        let url = self.saved_input.clone();
+        let net = self.saved_network.clone();
+        let dec = self.saved_decoder;
+        let new = Self::open_input(&url, &net, &dec)?;
+        let used = self.reconnects_used + 1;
+        *self = new;
+        self.reconnects_used = used;
+        Ok(())
     }
 
     /// Pull the next decoded packet from the source.
@@ -284,13 +380,31 @@ impl FfmpegSource {
                     // Need more input.
                 }
                 Err(ffmpeg::Error::Eof) => {
+                    if self.is_live {
+                        // For live sources, EOF on the decoder side after we
+                        // told it to flush means the upstream demuxer also
+                        // stopped producing — treat as a disconnect that
+                        // reconnect can recover from.
+                        match self.try_reconnect_if_live() {
+                            Ok(true) => continue,
+                            Ok(false) => return Err(SourceError::Disconnected),
+                            Err(e) => return Err(e),
+                        }
+                    }
                     return Ok(None);
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(self.classify_decoder_error(e)),
             }
 
             // 2) Feed more input. After EOF, send a flush (None) once.
             if self.drained {
+                if self.is_live {
+                    match self.try_reconnect_if_live() {
+                        Ok(true) => continue,
+                        Ok(false) => return Err(SourceError::Disconnected),
+                        Err(e) => return Err(e),
+                    }
+                }
                 return Ok(None);
             }
 
@@ -308,9 +422,48 @@ impl FfmpegSource {
                     self.decoder.send_eof()?;
                     self.drained = true;
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(self.classify_demuxer_error(e)),
             }
         }
+    }
+
+    /// Map a decoder-side ffmpeg error into our [`SourceError`]. For live
+    /// sources, network-class failures are reclassified.
+    fn classify_decoder_error(&self, e: ffmpeg::Error) -> SourceError {
+        if self.is_live && is_network_class_error(&e) {
+            SourceError::Disconnected
+        } else {
+            SourceError::Ffmpeg(e)
+        }
+    }
+
+    /// Map a demuxer-side ffmpeg error during `read_packet`. The
+    /// timeout-vs-disconnect classification needs both branches because
+    /// libavformat surfaces them as different `Error` variants.
+    fn classify_demuxer_error(&self, e: ffmpeg::Error) -> SourceError {
+        if self.is_live {
+            if is_timeout_error(&e) {
+                return SourceError::ReadTimeout;
+            }
+            if is_network_class_error(&e) {
+                return SourceError::Disconnected;
+            }
+        }
+        SourceError::Ffmpeg(e)
+    }
+
+    /// If a reconnect budget remains, do it and return `Ok(true)`. If the
+    /// budget is exhausted, return `Ok(false)` so the caller can surface a
+    /// terminal `Disconnected` error.
+    fn try_reconnect_if_live(&mut self) -> Result<bool> {
+        if !self.is_live {
+            return Ok(false);
+        }
+        if self.reconnects_used >= self.saved_network.max_reconnects {
+            return Ok(false);
+        }
+        self.reconnect()?;
+        Ok(true)
     }
 
     /// Read-only access to captured metadata.
@@ -519,5 +672,48 @@ mod tests {
     fn open_file_rejects_missing_path() {
         let result = FfmpegSource::open_file("/nonexistent/path/clip.mp4");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn is_live_scheme_recognizes_rtsp_family() {
+        assert!(is_live_scheme("rtsp://cam.local/stream"));
+        assert!(is_live_scheme("RTSPS://cam.local/stream"));
+        assert!(is_live_scheme("rtmp://server/live"));
+        assert!(is_live_scheme("srt://10.0.0.1:1234"));
+        assert!(is_live_scheme("udp://239.0.0.1:1234"));
+        assert!(is_live_scheme("rtp://239.0.0.1:1234"));
+    }
+
+    #[test]
+    fn is_live_scheme_rejects_files_and_http() {
+        assert!(!is_live_scheme("/path/to/file.mp4"));
+        assert!(!is_live_scheme("file:///path/to/file.mp4"));
+        // HTTP-served static videos do reach a real EOF; we don't treat
+        // them as live.
+        assert!(!is_live_scheme("http://example.com/video.mp4"));
+        assert!(!is_live_scheme("https://example.com/video.mp4"));
+    }
+
+    #[test]
+    fn timeout_classifier_matches_etimedout_and_eagain() {
+        let etimed = ffmpeg::Error::Other { errno: libc::ETIMEDOUT };
+        let eagain = ffmpeg::Error::Other { errno: libc::EAGAIN };
+        let other = ffmpeg::Error::Eof;
+        assert!(is_timeout_error(&etimed));
+        assert!(is_timeout_error(&eagain));
+        assert!(!is_timeout_error(&other));
+    }
+
+    #[test]
+    fn network_classifier_matches_econn_family() {
+        for errno in [
+            libc::ECONNREFUSED,
+            libc::ECONNRESET,
+            libc::EHOSTUNREACH,
+            libc::ENETUNREACH,
+        ] {
+            assert!(is_network_class_error(&ffmpeg::Error::Other { errno }));
+        }
+        assert!(!is_network_class_error(&ffmpeg::Error::Eof));
     }
 }

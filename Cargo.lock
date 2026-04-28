@@ -308,6 +308,7 @@ dependencies = [
  "ffmpeg-next",
  "ffmpeg-sys-next",
  "fovea-mv-core",
+ "libc",
  "proptest",
  "thiserror",
  "tracing",
