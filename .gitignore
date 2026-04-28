@@ -41,6 +41,8 @@ benchmarks/datasets/**/*.mov
 benchmarks/datasets/**/*.mkv
 benchmarks/datasets/**/*.h264
 benchmarks/datasets/**/*.h265
+benchmarks/datasets/**/data/
+benchmarks/datasets/**/*.zip
 
 # Claude
 .claude/settings.local.json

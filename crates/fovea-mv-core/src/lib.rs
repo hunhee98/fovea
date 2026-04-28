@@ -16,6 +16,7 @@
 
 #![warn(missing_docs)]
 
+pub mod global_motion;
 pub mod triggers;
 
 use std::fmt;

@@ -33,6 +33,7 @@ file + RTSP.
 | Multi-stream concurrency (Tokio) | ~1 week | currently caller manages threads |
 | Onset/offset trigger | ~3-5 days | closes Step 5 recall gap |
 | Trigger confidence score | ~1 day | event.confidence for downstream filtering |
+| Auto-calibrating trigger | ~3-5 days | observe first N seconds, set threshold at percentile of energy distribution. Removes per-camera manual tuning. Same crate as `MotionTrigger` since it wraps it. |
 
 ## Tier 4 — release prep (only if going public)
 

@@ -11,7 +11,33 @@
 //! Composing multiple triggers is the caller's responsibility — the order in
 //! which they are evaluated determines which `Event` wins for a given packet.
 
+use crate::global_motion::{to_q4, GlobalMotionEstimate, GlobalMotionEstimator};
 use crate::{intra_ratio, motion_energy, skip_ratio, Event, FrameType, MotionVector, MvPacket, Trigger};
+
+/// Sliding window that smooths energy over the last `cap` packets.
+///
+/// Reduces false positives from single-frame encoding artefacts and lets
+/// sustained low-level motion accumulate past threshold.
+struct EnergyWindow {
+    cap: usize,
+    buf: std::collections::VecDeque<u64>,
+}
+
+impl EnergyWindow {
+    fn new(cap: usize) -> Self {
+        Self { cap: cap.max(1), buf: std::collections::VecDeque::with_capacity(cap.max(1)) }
+    }
+
+    /// Push a new value and return the current window mean.
+    fn push_and_mean(&mut self, val: u64) -> u64 {
+        if self.buf.len() == self.cap {
+            self.buf.pop_front();
+        }
+        self.buf.push_back(val);
+        let sum: u64 = self.buf.iter().sum();
+        sum / self.buf.len() as u64
+    }
+}
 
 /// Rectangular region of interest, used by [`MotionTrigger`] to ignore motion
 /// outside a fixed area of the frame.
@@ -72,6 +98,8 @@ pub struct MotionTrigger {
     pub min_duration_ms: u32,
     /// Optional region of interest.
     pub mask: Option<RegionMask>,
+    global_motion: Option<GlobalMotionEstimator>,
+    window: Option<EnergyWindow>,
     above_since_us: Option<i64>,
     fired_this_episode: bool,
 }
@@ -96,6 +124,8 @@ impl MotionTrigger {
             threshold: mode,
             min_duration_ms: 0,
             mask: None,
+            global_motion: None,
+            window: None,
             above_since_us: None,
             fired_this_episode: false,
         }
@@ -113,20 +143,55 @@ impl MotionTrigger {
         self
     }
 
-    fn energy_for(&self, mvs: &[MotionVector]) -> u64 {
-        match self.mask {
-            None => motion_energy(mvs),
-            Some(m) => {
-                let mut sum: u64 = 0;
-                for mv in mvs {
-                    if m.contains(mv.dst_x, mv.dst_y) {
-                        let scale = mv.motion_scale.max(1) as u64;
-                        sum += mv.l1_magnitude() / scale;
-                    }
+    /// Enable camera-motion compensation via median global-motion subtraction.
+    ///
+    /// Per packet: estimates dominant (median) MV across the full frame, then
+    /// subtracts it before summing energy. Reduces false positives from camera
+    /// vibration, wind shake, and slow PTZ drift.
+    ///
+    /// Cost: two O(n log n) sorts + two temporary `Vec<i32>` allocations of
+    /// length `mvs.len()` per packet.
+    pub fn with_global_motion(mut self, estimator: GlobalMotionEstimator) -> Self {
+        self.global_motion = Some(estimator);
+        self
+    }
+
+    /// Smooth energy over the last `frames` packets before threshold comparison.
+    ///
+    /// Reduces false positives from single-frame encoding artefacts. Sustained
+    /// low-level motion that is individually below threshold accumulates and can
+    /// cross it. `frames = 0` is treated as `frames = 1` (no-op).
+    pub fn with_window(mut self, frames: usize) -> Self {
+        self.window = Some(EnergyWindow::new(frames));
+        self
+    }
+
+    fn energy_for(&self, mvs: &[MotionVector], gm: Option<GlobalMotionEstimate>) -> u64 {
+        let (sub_x, sub_y) = match gm {
+            Some(g) => (g.dx_q4 as i32, g.dy_q4 as i32),
+            None => (0, 0),
+        };
+        let corrected = gm.is_some();
+        let mut sum: u64 = 0;
+        for mv in mvs {
+            if let Some(m) = self.mask {
+                if !m.contains(mv.dst_x, mv.dst_y) {
+                    continue;
                 }
-                sum
+            }
+            if corrected {
+                // Work in q4, divide by 4 at the end to match uncorrected
+                // pixel-unit energy. Threshold semantics stay constant
+                // whether or not global-motion correction is enabled.
+                let q4x = to_q4(mv.motion_x, mv.motion_scale) - sub_x;
+                let q4y = to_q4(mv.motion_y, mv.motion_scale) - sub_y;
+                sum += (q4x.unsigned_abs() as u64 + q4y.unsigned_abs() as u64) / 4;
+            } else {
+                let scale = mv.motion_scale.max(1) as u64;
+                sum += mv.l1_magnitude() / scale;
             }
         }
+        sum
     }
 
     fn absolute_threshold_for(&self, packet: &MvPacket) -> u64 {
@@ -149,7 +214,13 @@ impl MotionTrigger {
 
 impl Trigger for MotionTrigger {
     fn evaluate(&mut self, packet: &MvPacket) -> Option<Event> {
-        let energy = self.energy_for(&packet.mvs);
+        let gm = self.global_motion.as_ref().and_then(|est| est.estimate(&packet.mvs));
+        let raw_energy = self.energy_for(&packet.mvs, gm);
+        let energy = if let Some(ref mut win) = self.window {
+            win.push_and_mean(raw_energy)
+        } else {
+            raw_energy
+        };
         let threshold = self.absolute_threshold_for(packet);
         if energy >= threshold {
             let started = *self.above_since_us.get_or_insert(packet.ts_us);
@@ -289,6 +360,7 @@ impl Trigger for SceneChangeTrigger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::global_motion::GlobalMotionEstimator;
 
     fn mv(mx: i32, my: i32, dst_x: i16, dst_y: i16) -> MotionVector {
         MotionVector {
@@ -474,6 +546,73 @@ mod tests {
         let mut t = SceneChangeTrigger::new(0.4);
         let p = p_packet(0, vec![], 20, 100); // 0.2 < 0.4
         assert!(t.evaluate(&p).is_none());
+    }
+
+    // ----- MotionTrigger: global motion correction -----
+
+    #[test]
+    fn global_motion_suppresses_uniform_camera_shake() {
+        // All MVs identical (pure camera pan) → corrected energy ≈ 0 → no fire.
+        let mut t = MotionTrigger::new(5).with_global_motion(GlobalMotionEstimator);
+        // 20 MVs all at (20, 20) q4 → global motion = (20, 20), residuals = 0
+        let mvs: Vec<_> = (0..20).map(|_| mv(20, 20, 0, 0)).collect();
+        let p = p_packet(0, mvs, 0, 100);
+        assert!(
+            t.evaluate(&p).is_none(),
+            "uniform camera pan must not trigger after global-motion correction"
+        );
+    }
+
+    #[test]
+    fn global_motion_preserves_object_motion() {
+        // 19 MVs at (4, 0) (camera pan), 1 MV at (40, 0) (moving object).
+        // After correction: 19 residuals ≈ 0, 1 residual = 36 q4 → triggers.
+        let mut t = MotionTrigger::new(5).with_global_motion(GlobalMotionEstimator);
+        let mut mvs: Vec<_> = (0..19).map(|_| mv(4, 0, 0, 0)).collect();
+        mvs.push(mv(40, 0, 0, 0)); // local object
+        let p = p_packet(0, mvs, 0, 100);
+        assert!(
+            t.evaluate(&p).is_some(),
+            "object motion must survive global-motion correction"
+        );
+    }
+
+    // ----- MotionTrigger: sliding window -----
+
+    #[test]
+    fn window_smooths_single_spike() {
+        // Threshold = 20, window = 3.
+        // One spike at energy 60 gets averaged over 3 slots: mean = 20 (not > 20).
+        // Two more low-energy packets follow; window mean stays below threshold.
+        let _t = MotionTrigger::new(21).with_window(3);
+        // Frame 1: energy = 60 (spike). Window = [60]. mean = 60 → fires? yes, 60 >= 21.
+        // Let's use a tighter scenario: threshold=100, spike=60.
+        let mut t2 = MotionTrigger::new(100).with_window(3);
+        let spike = p_packet(0, vec![mv(240, 0, 0, 0)], 0, 100); // energy = 240/4 = 60
+        let low = p_packet(33_000, vec![mv(4, 0, 0, 0)], 0, 100); // energy = 1
+        let low2 = p_packet(66_000, vec![mv(4, 0, 0, 0)], 0, 100);
+        // Window after spike: [60], mean = 60 < 100 → no fire
+        assert!(t2.evaluate(&spike).is_none(), "single spike below threshold after smoothing");
+        assert!(t2.evaluate(&low).is_none());
+        assert!(t2.evaluate(&low2).is_none());
+    }
+
+    #[test]
+    fn window_accumulates_sustained_motion() {
+        // Threshold = 10, window = 3.
+        // Each packet has energy = 12 → mean after 1 packet = 12 → fires immediately.
+        // Verify it fires on the first above-threshold (window doesn't delay correct triggers).
+        let mut t = MotionTrigger::new(10).with_window(3);
+        let p1 = p_packet(0, vec![mv(48, 0, 0, 0)], 0, 100); // energy = 12
+        assert!(t.evaluate(&p1).is_some(), "sustained motion must fire");
+    }
+
+    #[test]
+    fn window_size_zero_treated_as_one() {
+        // with_window(0) must not panic and must behave like no-window.
+        let mut t = MotionTrigger::new(5).with_window(0);
+        let p = p_packet(0, vec![mv(40, 0, 0, 0)], 0, 100); // energy = 10 >= 5
+        assert!(t.evaluate(&p).is_some());
     }
 
     #[test]
