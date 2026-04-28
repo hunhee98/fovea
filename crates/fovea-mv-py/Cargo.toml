@@ -17,3 +17,4 @@ path = "src/lib.rs"
 fovea-mv-core = { path = "../fovea-mv-core", version = "0.0.1" }
 fovea-mv-stream = { path = "../fovea-mv-stream", version = "0.0.1" }
 pyo3 = { version = "0.28", features = ["extension-module"] }
+numpy = "0.28"

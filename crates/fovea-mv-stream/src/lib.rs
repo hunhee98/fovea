@@ -16,6 +16,8 @@ use ffmpeg::format::context::Input;
 use ffmpeg::media::Type as MediaType;
 use ffmpeg::util::frame::video::Video as VideoFrame;
 use ffmpeg::util::picture::Type as PictureType;
+use ffmpeg::software::scaling::{context::Context as Scaler, flag::Flags as ScalerFlags};
+use ffmpeg::util::format::pixel::Pixel;
 use fovea_mv_core::{FrameType, MotionVector, MvPacket};
 use thiserror::Error;
 
@@ -86,6 +88,10 @@ pub struct FfmpegSource {
     out_packet: MvPacket,
     /// `true` once container EOF reached and decoder flushed.
     drained: bool,
+    /// Lazy YUV→RGB scaler. Constructed on first `last_frame_rgb()` call.
+    rgb_scaler: Option<Scaler>,
+    /// Reusable RGB destination frame.
+    rgb_frame: VideoFrame,
 }
 
 impl FfmpegSource {
@@ -158,6 +164,8 @@ impl FfmpegSource {
             frame_scratch: VideoFrame::empty(),
             out_packet: MvPacket::empty(),
             drained: false,
+            rgb_scaler: None,
+            rgb_frame: VideoFrame::empty(),
         })
     }
 
@@ -244,6 +252,54 @@ impl FfmpegSource {
         // returned raw pointer is read-only and aliases the borrow's
         // lifetime; caller-side safety contract is documented above.
         unsafe { self.frame_scratch.as_ptr() }
+    }
+
+    /// Convert the most recently decoded frame to packed RGB24 and return
+    /// a contiguous (height × width × 3) byte buffer.
+    ///
+    /// Allocates fresh on the first call and reuses the destination frame
+    /// across subsequent calls. Layout: `[r, g, b, r, g, b, ...]` row-major,
+    /// no padding within a row (we copy out of FFmpeg's strided buffer).
+    ///
+    /// Returns an error if no frame has been decoded yet, or if scaling fails.
+    pub fn last_frame_rgb(&mut self) -> Result<Vec<u8>> {
+        let w = self.decoder.width();
+        let h = self.decoder.height();
+        if w == 0 || h == 0 {
+            return Err(SourceError::Ffmpeg(ffmpeg::Error::InvalidData));
+        }
+        let src_format = self.decoder.format();
+        if src_format == Pixel::None {
+            return Err(SourceError::Ffmpeg(ffmpeg::Error::InvalidData));
+        }
+        let scaler = match &mut self.rgb_scaler {
+            Some(s) => s,
+            None => {
+                let s = Scaler::get(
+                    src_format,
+                    w,
+                    h,
+                    Pixel::RGB24,
+                    w,
+                    h,
+                    ScalerFlags::BILINEAR,
+                )?;
+                self.rgb_scaler = Some(s);
+                self.rgb_scaler.as_mut().unwrap()
+            }
+        };
+        scaler.run(&self.frame_scratch, &mut self.rgb_frame)?;
+
+        // Copy out of strided RGB into tightly packed Vec<u8>.
+        let stride = self.rgb_frame.stride(0);
+        let plane = self.rgb_frame.data(0);
+        let row_bytes = (w as usize) * 3;
+        let mut out = Vec::with_capacity(row_bytes * h as usize);
+        for y in 0..h as usize {
+            let off = y * stride;
+            out.extend_from_slice(&plane[off..off + row_bytes]);
+        }
+        Ok(out)
     }
 }
 

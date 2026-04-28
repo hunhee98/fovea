@@ -1,8 +1,46 @@
 """fovea-mv: H.264 motion-vector trigger engine.
 
-Status: scaffolding. Public API lands in MVP step 4 (see docs/05.exec-plans/001-mvtrigger-mvp.md).
+Open a video, iterate the events that the trigger pipeline fires, and forward
+those events to a downstream model (e.g. a VLM) only when they fire.
+
+Quick start::
+
+    from fovea_mv import Stream, MotionTrigger, IntervalTrigger
+
+    stream = Stream.from_file("clip.mp4")
+    triggers = [
+        MotionTrigger(energy_threshold=20_000),
+        IntervalTrigger(max_gap_ms=10_000),
+    ]
+    for event in stream.events(triggers):
+        rgb = event.decode()  # numpy uint8 (H, W, 3)
+        # forward to VLM, save clip, ...
+
+See `docs/05.exec-plans/001-mvtrigger-mvp.md` for design notes.
 """
 
-from ._fovea_mv import core_version  # type: ignore[import-not-found]
+from ._fovea_mv import (  # type: ignore[import-not-found]
+    Event,
+    EventIterator,
+    IntervalTrigger,
+    MotionTrigger,
+    RegionMask,
+    SceneChangeTrigger,
+    Stream,
+    VideoInfo,
+    core_version,
+)
 
-__all__ = ["core_version"]
+__all__ = [
+    "Event",
+    "EventIterator",
+    "IntervalTrigger",
+    "MotionTrigger",
+    "RegionMask",
+    "SceneChangeTrigger",
+    "Stream",
+    "VideoInfo",
+    "core_version",
+]
+
+__version__ = core_version()
