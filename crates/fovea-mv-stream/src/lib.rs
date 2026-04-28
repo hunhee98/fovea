@@ -570,7 +570,13 @@ impl FfmpegSource {
                     }
                     self.drained = true;
                 }
-                Err(e) => return Err(self.classify_demuxer_error(e)),
+                Err(e) => {
+                    if let Some(err) = self.handle_demuxer_error(e) {
+                        return Err(err);
+                    }
+                    // Reconnected — restart the loop on the new backend.
+                    continue;
+                }
             }
         }
     }
@@ -619,7 +625,12 @@ impl FfmpegSource {
                     }
                     self.drained = true;
                 }
-                Err(e) => return Err(self.classify_demuxer_error(e)),
+                Err(e) => {
+                    if let Some(err) = self.handle_demuxer_error(e) {
+                        return Err(err);
+                    }
+                    continue;
+                }
             }
         }
     }
@@ -729,6 +740,26 @@ impl FfmpegSource {
         }
         self.reconnect()?;
         Ok(true)
+    }
+
+    /// Demuxer-error handler that prefers reconnect over surfacing the
+    /// failure. Returns `Some(error)` when the caller must give up, or
+    /// `None` when a reconnect succeeded and the loop should retry.
+    fn handle_demuxer_error(&mut self, e: ffmpeg::Error) -> Option<SourceError> {
+        let classified = self.classify_demuxer_error(e);
+        let recoverable = matches!(
+            classified,
+            SourceError::Disconnected | SourceError::ReadTimeout
+        );
+        if recoverable {
+            match self.try_reconnect_if_live() {
+                Ok(true) => None,
+                Ok(false) => Some(classified),
+                Err(e) => Some(e),
+            }
+        } else {
+            Some(classified)
+        }
     }
 
     /// Read-only access to captured metadata.
