@@ -15,7 +15,7 @@ use pyo3::types::PyType;
 
 use fovea_mv_core::triggers::{
     IntervalTrigger as RsIntervalTrigger, MotionTrigger as RsMotionTrigger, RegionMask as RsRegionMask,
-    SceneChangeTrigger as RsSceneChangeTrigger,
+    SceneChangeTrigger as RsSceneChangeTrigger, SpatialClusterTrigger as RsSpatialClusterTrigger,
 };
 use fovea_mv_core::Trigger as RsTrigger;
 use fovea_mv_stream::{FfmpegSource, NetworkOptions, OpenOptions, RtspTransport, SourceError};
@@ -37,6 +37,7 @@ enum TriggerImpl {
     Motion(RsMotionTrigger),
     Interval(RsIntervalTrigger),
     SceneChange(RsSceneChangeTrigger),
+    SpatialCluster(RsSpatialClusterTrigger),
 }
 
 impl TriggerImpl {
@@ -45,6 +46,7 @@ impl TriggerImpl {
             Self::Motion(t) => t.evaluate(packet),
             Self::Interval(t) => t.evaluate(packet),
             Self::SceneChange(t) => t.evaluate(packet),
+            Self::SpatialCluster(t) => t.evaluate(packet),
         }
     }
 }
@@ -187,6 +189,50 @@ impl PySceneChangeTrigger {
     }
 }
 
+/// Spatial-cluster trigger.
+///
+/// Fires when motion energy is concentrated in a small region of the
+/// frame. Suppresses motion that is uniformly scattered (leaves, rain,
+/// flickering background).
+///
+/// Two thresholds:
+/// - `min_total_energy`: minimum sum of MV magnitudes per packet to
+///   even consider firing (noise floor).
+/// - `min_concentration`: minimum `peak_cell_energy / total_energy`
+///   ratio in [0.0, 1.0]. 0.5 means "at least half the energy lives
+///   in a single grid cell".
+///
+/// Optional `cell_size_px` (default 128) sets the spatial grid
+/// resolution and `cooldown_ms` (default 100) the per-fire debounce.
+#[pyclass(name = "SpatialClusterTrigger")]
+struct PySpatialClusterTrigger {
+    min_total_energy: u64,
+    min_concentration: f32,
+    cell_size_px: u16,
+    cooldown_ms: u32,
+}
+
+#[pymethods]
+impl PySpatialClusterTrigger {
+    #[new]
+    #[pyo3(signature = (min_total_energy, min_concentration, *, cell_size_px=128, cooldown_ms=100))]
+    fn new(min_total_energy: u64, min_concentration: f32, cell_size_px: u16, cooldown_ms: u32) -> Self {
+        Self {
+            min_total_energy,
+            min_concentration,
+            cell_size_px,
+            cooldown_ms,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SpatialClusterTrigger(min_total_energy={}, min_concentration={}, cell_size_px={}, cooldown_ms={})",
+            self.min_total_energy, self.min_concentration, self.cell_size_px, self.cooldown_ms
+        )
+    }
+}
+
 /// Convert a Python trigger object into the internal `TriggerImpl`.
 fn build_trigger(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<TriggerImpl> {
     if let Ok(t) = obj.extract::<PyRef<PyMotionTrigger>>() {
@@ -210,10 +256,16 @@ fn build_trigger(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<TriggerImpl
         Ok(TriggerImpl::SceneChange(RsSceneChangeTrigger::new(
             t.intra_block_ratio_threshold,
         )))
+    } else if let Ok(t) = obj.extract::<PyRef<PySpatialClusterTrigger>>() {
+        Ok(TriggerImpl::SpatialCluster(
+            RsSpatialClusterTrigger::new(t.min_total_energy, t.min_concentration)
+                .with_cell_size_px(t.cell_size_px)
+                .with_cooldown_ms(t.cooldown_ms),
+        ))
     } else {
         let _ = py;
         Err(PyValueError::new_err(
-            "expected MotionTrigger / IntervalTrigger / SceneChangeTrigger",
+            "expected MotionTrigger / IntervalTrigger / SceneChangeTrigger / SpatialClusterTrigger",
         ))
     }
 }
@@ -584,6 +636,7 @@ fn _fovea_mv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMotionTrigger>()?;
     m.add_class::<PyIntervalTrigger>()?;
     m.add_class::<PySceneChangeTrigger>()?;
+    m.add_class::<PySpatialClusterTrigger>()?;
     m.add_class::<PyRegionMask>()?;
     Ok(())
 }

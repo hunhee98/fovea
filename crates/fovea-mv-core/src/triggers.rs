@@ -357,6 +357,134 @@ impl Trigger for SceneChangeTrigger {
     }
 }
 
+/// Spatial-cluster trigger — fires when motion energy concentrates in a
+/// small region of the frame, suppresses motion that is uniformly
+/// scattered.
+///
+/// Use case: distinguish a person / vehicle (energy concentrated near one
+/// or two adjacent cells) from environmental noise like leaves in wind,
+/// rain, or a flapping flag (energy spread across the whole frame).
+///
+/// Algorithm: bin every MV's destination pixel into a square grid of
+/// `cell_size_px` cells. For each cell, sum the L1 magnitudes (in
+/// pixel units) of the MVs landing inside it. Compute
+/// `concentration = peak_cell_energy / total_energy`. Fire when both:
+/// 1. `total_energy >= min_total_energy` (avoid firing on noise floor),
+/// 2. `concentration >= min_concentration` (the energy is clustered).
+///
+/// `concentration ∈ (0.0, 1.0]`. A frame whose energy is split evenly
+/// across N active cells gives concentration ≈ 1/N. A single tightly
+/// localised mover gives concentration close to 1.0.
+///
+/// Cost: O(mvs.len()) per packet, allocation-free aside from the
+/// grid scratch which is reused across packets.
+pub struct SpatialClusterTrigger {
+    /// Square grid cell size in pixels. Typical: 128 or 256.
+    pub cell_size_px: u16,
+    /// Minimum total energy (sum of L1 magnitudes / motion_scale) before
+    /// concentration is even checked.
+    pub min_total_energy: u64,
+    /// Minimum `peak_cell_energy / total_energy` to fire. 0.0–1.0.
+    pub min_concentration: f32,
+    /// Cooldown between fires. Defaults to 100 ms.
+    cooldown_us: i64,
+    last_fire_us: Option<i64>,
+    /// Grid scratch — `(cell_x, cell_y) -> energy`. Reused across packets;
+    /// `clear()` keeps capacity. We use a hash map rather than a dense
+    /// array so we don't depend on knowing the frame size up front.
+    grid: std::collections::HashMap<(u16, u16), u64>,
+}
+
+impl SpatialClusterTrigger {
+    /// Construct with a 128 px cell grid and 100 ms cooldown.
+    pub fn new(min_total_energy: u64, min_concentration: f32) -> Self {
+        Self {
+            cell_size_px: 128,
+            min_total_energy,
+            min_concentration,
+            cooldown_us: 100_000,
+            last_fire_us: None,
+            grid: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Override the grid cell size in pixels.
+    pub fn with_cell_size_px(mut self, px: u16) -> Self {
+        self.cell_size_px = px.max(1);
+        self
+    }
+
+    /// Override the per-fire cooldown, in milliseconds.
+    pub fn with_cooldown_ms(mut self, ms: u32) -> Self {
+        self.cooldown_us = (ms as i64) * 1_000;
+        self
+    }
+}
+
+impl Trigger for SpatialClusterTrigger {
+    fn evaluate(&mut self, packet: &MvPacket) -> Option<Event> {
+        if matches!(packet.frame_type, FrameType::I | FrameType::Other) {
+            return None;
+        }
+        if packet.mvs.is_empty() {
+            return None;
+        }
+
+        // Bin MVs into the grid. Per-MV cost: one map lookup + one add.
+        let cell = self.cell_size_px.max(1) as i32;
+        self.grid.clear();
+        let mut total_energy: u64 = 0;
+        for mv in &packet.mvs {
+            let scale = mv.motion_scale.max(1) as u64;
+            let e = mv.l1_magnitude() / scale;
+            if e == 0 {
+                continue;
+            }
+            // Negative dst coordinates can theoretically occur on
+            // bitstream corruption; clamp to 0 so the bin index is
+            // non-negative.
+            let cx = (mv.dst_x.max(0) as i32 / cell) as u16;
+            let cy = (mv.dst_y.max(0) as i32 / cell) as u16;
+            *self.grid.entry((cx, cy)).or_insert(0) += e;
+            total_energy += e;
+        }
+
+        if total_energy < self.min_total_energy {
+            return None;
+        }
+
+        let peak = self.grid.values().copied().max().unwrap_or(0);
+        if peak == 0 {
+            return None;
+        }
+        let concentration = (peak as f64 / total_energy as f64) as f32;
+        if concentration < self.min_concentration {
+            return None;
+        }
+
+        if let Some(prev) = self.last_fire_us {
+            if packet.ts_us.saturating_sub(prev) < self.cooldown_us {
+                return None;
+            }
+        }
+        self.last_fire_us = Some(packet.ts_us);
+
+        Some(Event {
+            ts_us: packet.ts_us,
+            frame_type: packet.frame_type,
+            trigger_name: self.name(),
+            energy: total_energy,
+            intra_ratio: intra_ratio(packet),
+            skip_ratio: skip_ratio(packet),
+            mv_count: packet.mvs.len() as u32,
+        })
+    }
+
+    fn name(&self) -> &'static str {
+        "spatial_cluster"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -624,5 +752,57 @@ mod tests {
         assert!(t.evaluate(&a).is_some());
         assert!(t.evaluate(&b).is_none()); // within 100ms
         assert!(t.evaluate(&c).is_some()); // > 100ms later
+    }
+
+    // ----- SpatialClusterTrigger -----
+
+    #[test]
+    fn spatial_cluster_fires_on_concentrated_motion() {
+        // 32 MVs all landing in the same 128 px cell (cell 0,0). High
+        // concentration should cross the 0.8 threshold easily.
+        let mut t = SpatialClusterTrigger::new(50, 0.8);
+        let mvs: Vec<_> = (0..32).map(|_| mv(40, 0, 16, 16)).collect();
+        let pkt = p_packet(0, mvs, 0, 100);
+        let ev = t.evaluate(&pkt).expect("clustered motion must fire");
+        assert_eq!(ev.trigger_name, "spatial_cluster");
+    }
+
+    #[test]
+    fn spatial_cluster_suppresses_scattered_motion() {
+        // 32 MVs distributed across 32 different cells (one MV per cell)
+        // → concentration ≈ 1/32 = 0.03 ≪ 0.5 threshold → no fire.
+        let mut t = SpatialClusterTrigger::new(50, 0.5);
+        let mvs: Vec<_> = (0..32)
+            .map(|i| mv(40, 0, (i * 200) as i16, (i * 200) as i16))
+            .collect();
+        let pkt = p_packet(0, mvs, 0, 100);
+        assert!(t.evaluate(&pkt).is_none(), "scattered motion must not fire");
+    }
+
+    #[test]
+    fn spatial_cluster_below_total_energy_does_not_fire() {
+        // Concentrated motion but total energy below the floor.
+        let mut t = SpatialClusterTrigger::new(10_000, 0.5);
+        let pkt = p_packet(0, vec![mv(40, 0, 16, 16)], 0, 100); // energy = 10
+        assert!(t.evaluate(&pkt).is_none());
+    }
+
+    #[test]
+    fn spatial_cluster_skips_iframe() {
+        let mut t = SpatialClusterTrigger::new(0, 0.0);
+        let i = i_packet(0, 100);
+        assert!(t.evaluate(&i).is_none(), "I-frames must not trigger spatial cluster");
+    }
+
+    #[test]
+    fn spatial_cluster_debounces_within_cooldown() {
+        let mut t = SpatialClusterTrigger::new(50, 0.8).with_cooldown_ms(100);
+        let mvs: Vec<_> = (0..32).map(|_| mv(40, 0, 16, 16)).collect();
+        let a = p_packet(0, mvs.clone(), 0, 100);
+        let b = p_packet(50_000, mvs.clone(), 0, 100); // 50ms < 100ms cooldown
+        let c = p_packet(150_000, mvs, 0, 100); // > 100ms later
+        assert!(t.evaluate(&a).is_some());
+        assert!(t.evaluate(&b).is_none());
+        assert!(t.evaluate(&c).is_some());
     }
 }
