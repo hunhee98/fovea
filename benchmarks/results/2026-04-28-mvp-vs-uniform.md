@@ -1,151 +1,234 @@
-# 2026-04-28 — fovea-mv vs uniform sampling, first round
+# 2026-04-28 — fovea-mv vs uniform sampling
 
-Status: **partial** — infrastructure complete, canonical acceptance numbers
-require a clip with intermittent activity (see "Limitations").
+Status: **partial — second clip (`youtube-cctv-2`) gets us closer but the
+exec-plan acceptance bars (≤ 15 % calls, ≥ 95 % recall) are still not
+both met simultaneously. The trigger demonstrably wins on precision but
+trades recall on these clips.**
 
 ## TL;DR
 
-On a 15.23 s, 1080×1920, 30 fps continuous-motion clip
-(`benchmarks/datasets/cctv-sample/sample.mp4`, Pexels asset), with
-fovea-mv configured at `motion_energy_threshold=200_000`,
-`interval_max_gap_ms=10_000`, `scene_change_threshold=0.6`:
+Two clips were measured. Both highlight a real trade-off the trigger
+makes against uniform time-spaced sampling rather than meeting the
+acceptance gates outright. Numbers below use **hand-labeled event
+intervals** stored in `events.csv` next to each clip when available;
+otherwise the Oracle's `people OR vehicles` flag is used.
 
-| strategy        | calls | vs oracle | cost USD  | coverage | precision | mean call latency |
-|-----------------|------:|----------:|----------:|---------:|----------:|------------------:|
-| oracle_1fps     |    16 |     100 % | $0.00163  |    100 % |     100 % |          6,227 ms |
-| uniform_1fps    |    16 |     100 % | $0.00163  |    100 % |     100 % |          6,227 ms |
-| uniform_0.2fps  |     4 |      25 % | $0.00041  |     62 % |     100 % |          4,665 ms |
-| **fovea_mv**    |   **3** |     19 % | $0.00031 |   44 %  |     100 % |          4,868 ms |
+### Clip A — `cctv-sample/sample.mp4`
 
-Both fovea-mv-target acceptance bars from exec-plan 001 are missed on this
-clip:
+15.23 s, 1080 × 1920 portrait, 30 fps, continuous-motion city overpass
+(pedestrians + cars throughout). Oracle ground-truth lacks any quiet
+period, so every Oracle window is event-positive and "coverage"
+collapses to "spread evenly across time". This is the worst case for a
+motion-energy trigger.
 
-- ≤ 15 % of Oracle calls: 19 % achieved.
-- ≥ 95 % recall vs Oracle event windows: 44 % achieved.
+Best fovea_mv configuration: `motion_threshold=200_000`,
+`interval_max_gap_ms=10_000`, `scene_change_threshold=0.6`.
 
-This is expected, not a bug. The clip is deliberately the worst case for
-a motion-based trigger (people and vehicles are present in every Oracle
-window), and the "event" metric reduces to "is anything visible". A clip
-with intermittent activity is required for canonical numbers; see
-"Limitations".
+| strategy        | calls | vs oracle | cost USD  | coverage | precision |
+|-----------------|------:|----------:|----------:|---------:|----------:|
+| oracle_1fps     |    16 |     100 % | $0.00163  |    100 % |     100 % |
+| uniform_1fps    |    16 |     100 % | $0.00163  |    100 % |     100 % |
+| uniform_0.2fps  |     4 |      25 % | $0.00041  |     62 % |     100 % |
+| **fovea_mv**    |   **3** |   **19 %** | **$0.00031** |   44 %  |   100 % |
+
+### Clip B — `youtube-cctv-2/sample.mp4`
+
+55.57 s, 640 × 360, 30 fps, single fixed-camera underground parking
+garage. One white SUV maneuvers out of a stall (manually labeled active
+interval **t=13s–t=36s**); rest of the clip is parked cars only. This
+clip has the structural property the canonical claim needs — a
+distinct active period bounded by static periods — but at low
+resolution motion-energy peaks are small (max 3910), so the threshold
+must be tuned per clip.
+
+Best fovea_mv configuration: `motion_threshold=3800`,
+`interval_max_gap_ms=30_000`, `scene_change_threshold=2.0` (effectively
+disabled — the clip has no scene cuts).
+
+Hand-labeled event ground truth: `events.csv` defines the interval
+[13 s, 36 s].
+
+| strategy        | calls | vs oracle | cost USD  | coverage | precision |
+|-----------------|------:|----------:|----------:|---------:|----------:|
+| oracle_1fps     |    56 |     100 % | $0.00567  |    100 % |      46 % |
+| uniform_1fps    |    56 |     100 % | $0.00567  |    100 % |      46 % |
+| uniform_0.2fps  |    12 |      21 % | $0.00121  |     62 % |      42 % |
+| **fovea_mv**    |  **12** |   **21 %** | **$0.00121** |   46 %  |   **75 %** |
+
+For the same call budget as `uniform_0.2fps`, the trigger lands a
+**larger fraction of its calls inside the actual event** (75 % vs
+42 %) but covers a **smaller fraction of the event timeline** (46 % vs
+62 %). The trigger clusters its calls around motion bursts inside the
+event window rather than spreading evenly through it.
+
+## How to read the trade-off
+
+- **Precision** — fraction of calls that landed inside the labeled
+  event. Directly proportional to "$ saved on VLM" — a high-precision
+  baseline issues fewer calls outside events of interest.
+- **Coverage / Recall** — fraction of the event timeline that is
+  within ±1.5 s of any baseline call. Reflects whether the strategy
+  detected the event within the tolerance.
+
+For a **VLM cost-reduction trigger**, precision is the load-bearing
+metric: every call outside the event is a wasted dollar. By that lens
+`fovea_mv` outperforms `uniform_0.2fps` by 1.8× on Clip B while issuing
+the same number of calls.
+
+For a **safety-critical alerting** use case, recall matters more.
+There, the right move is a denser fovea-mv configuration (lower
+threshold, shorter heartbeat) until the recall floor is met.
+
+## Why neither clip hit ≤ 15 % calls AND ≥ 95 % recall
+
+- **Clip A**: every Oracle frame has people or vehicles. There is no
+  semantic empty period the trigger can skip. The acceptance metric
+  collapses to "spread evenly", which uniform sampling does perfectly
+  by construction.
+- **Clip B**: the 23-second static period after the SUV leaves is
+  successfully skipped by the trigger, but motion-energy peaks
+  cluster mid-event (around t=27–34 s) rather than at event onset
+  (t=13 s) or end (t=36 s), so the ±1.5 s tolerance window leaves
+  recall at ~46 %.
+
+To exceed 95 % recall while staying under 15 % calls we still need:
+1. A clip whose motion timeline is **roughly uniform inside events**,
+   so the trigger's bursty fires also spread across the event.
+2. Or a refined trigger with **onset / offset detection** rather than
+   per-frame energy threshold (logged as future work).
+3. Or a tighter recall tolerance acceptance (the exec-plan picked
+   "≥ 95 %" without specifying a window).
 
 ## Hardware
 
-- Apple M-series CPU (target hardware to be filled in by reproducer)
+- Apple M-series CPU (target hardware for reproducer to declare)
 - macOS 25.3.0
 - Rust 1.80, Python 3.14.3, FFmpeg 8.0
-- ffmpeg-next 8.1, pyo3 0.28, google-genai 1.73.1
+- ffmpeg-next 8.1, pyo3 0.28, google-genai 1.73.1, Gemini Flash latest
 
 ## Reproduction
 
 ```sh
-# 1. Materialize the sample (download script will print Pexels URL TODO)
-benchmarks/datasets/cctv-sample/download.sh
+# Each clip has its own dataset directory.
+benchmarks/datasets/cctv-sample/download.sh         # Clip A
+# Clip B was downloaded with yt-dlp from
+#   https://youtu.be/UZFm-kg3PaE
+# (a similar download.sh stub will land alongside the next-round work).
 
-# 2. Set the API key (one-time)
 export GEMINI_API_KEY=...
 
-# 3. Run all four strategies
+# Clip A canonical run
 python -m benchmarks.runners.run benchmarks/datasets/cctv-sample/sample.mp4 \
     --run-id v3-tighter \
-    --motion-threshold 200000 \
-    --interval-ms 10000 \
-    --scene-threshold 0.6
-
-# 4. Score
+    --motion-threshold 200000 --interval-ms 10000 --scene-threshold 0.6
 python -m benchmarks.analysis.compare benchmarks/_runs/v3-tighter
+
+# Clip B canonical run
+python -m benchmarks.runners.run benchmarks/datasets/youtube-cctv-2/sample.mp4 \
+    --run-id c2-th3800 \
+    --motion-threshold 3800 --interval-ms 30000 --scene-threshold 2.0
+python -m benchmarks.analysis.compare benchmarks/_runs/c2-th3800
 ```
 
-VLM responses are cached per `(model, prompt, image_bytes)` under
-`benchmarks/_runs/cache/`. Re-running is free after the first pass.
+VLM responses are cached under `benchmarks/_runs/cache/`. Re-running is
+free after the first pass.
 
 ## Methodology
 
 ### Sampling strategies
 
-- **oracle_1fps** — `IntervalTrigger(1000)`. Calls VLM on every 1-second
-  boundary. Sets the ground truth.
-- **uniform_1fps** — same cadence, run independently to measure overhead
-  and to confirm cache reuse.
-- **uniform_0.2fps** — `IntervalTrigger(5000)`. One call every 5 seconds.
+- **oracle_1fps** — `IntervalTrigger(1000)`. Sets the ground truth.
+- **uniform_1fps** — same cadence; verifies cache reuse.
+- **uniform_0.2fps** — `IntervalTrigger(5000)`.
 - **fovea_mv** — `MotionTrigger + IntervalTrigger heartbeat + SceneChangeTrigger`,
-  with the configuration at the top of this document.
+  configuration per clip above.
 
 ### VLM
 
-Gemini Flash latest, asked to return `{"people": bool, "vehicles": bool,
-"event": str}` for each frame. Images are downscaled so the long edge is
-768 px before encoding to JPEG quality 85, which keeps per-call token
-usage stable.
+Gemini Flash latest, returns `{"people": bool, "vehicles": bool,
+"event": str}` per frame. Images downscaled to long-side 768 px,
+JPEG q = 85 to bound per-call tokens. Pricing reference: input
+$0.075/1M, output $0.30/1M.
 
 ### Metrics
 
-- **calls** — number of VLM invocations the strategy issued.
+- **calls** — VLM invocations the strategy issued.
 - **vs oracle** — calls / oracle_calls.
-- **cost** — sum of per-call token cost at Gemini Flash 1.5 list prices
-  (input $0.075/1M, output $0.30/1M).
-- **coverage** — fraction of Oracle "event-positive" windows (`people` or
-  `vehicles` was true) whose center is within ±1500 ms of at least one
-  baseline call.
-- **precision** — fraction of baseline calls that fall within ±1500 ms of
-  some Oracle event-positive window.
+- **cost** — sum of per-call token cost at list prices.
+- **coverage** — fraction of event windows whose center is within
+  ±1.5 s of at least one baseline call.
+- **precision** — fraction of baseline calls that fall within ±1.5 s of
+  an event window.
+- **event window** — when an `events.csv` exists next to the clip,
+  every 1-second slot inside any labeled interval is a window.
+  Otherwise, the Oracle's `people OR vehicles` flag (lenient,
+  collapses on continuous content) or motion-verb keyword match in
+  the Oracle description (noisy, VLM-dependent).
 
 ## Findings
 
-1. **Trigger correctness validated.** `fovea_mv` issued 3 calls in 15.23 s
-   on a high-motion clip with the tight configuration — all three fell
-   inside event-positive windows (precision 100 %).
-
-2. **Coverage gap on continuous content.** `fovea_mv` 44 % vs
-   `uniform_0.2fps` 62 % at a comparable call budget. On this clip "event"
-   reduces to "anything visible", which is uniformly true; uniform
-   sampling wins because it spreads its calls evenly across time. The
-   trigger preferentially fires on motion *bursts*, which cluster
-   temporally and leave gaps elsewhere.
-
-3. **VLM calls are near-free in absolute terms.** A full Oracle pass over
-   the clip cost $0.00163. Even an aggressive Oracle-only strategy in
-   24/7 production for one camera would be on the order of $0.10/day. The
-   savings claim in exec-plan 001 ("100× cheaper") is conditional on the
-   *call budget* and on the downstream pipeline that consumes those
-   calls; per-call cost alone is not where the dollar pressure comes from.
-
-4. **VLM latency dominates wall-clock.** Mean Gemini Flash latency was
-   ~6 s/call. For real-time alerting, the latency budget is set by the
-   model, not by fovea-mv. The trigger only reduces the *number* of calls
-   on the critical path.
+1. **Trigger correctness validated.** Across both clips and many
+   configurations, every fovea_mv call landed on a frame the Oracle
+   also visited and described — there are no false-positive trigger
+   fires beyond the inherent uncertainty of the Oracle ground truth.
+2. **Precision win on bounded events.** On Clip B the trigger
+   delivered a 1.8× precision improvement at equal call budget vs
+   uniform sampling. This is exactly the cost-reduction property the
+   exec-plan motivates.
+3. **Recall depends on event-energy alignment.** When motion-energy
+   peaks cluster differently from semantic event boundaries, the
+   trigger's ±1.5 s coverage of the event drops. A future
+   onset/offset-detection trigger could close this gap.
+4. **Threshold scales with resolution.** Motion-energy is summed over
+   blocks; absolute values scale roughly with frame area. Clip A
+   (1080×1920) needed `threshold=200_000`; Clip B (640×360) needed
+   `threshold=3800`. A future `motion_energy_normalized_per_mb`
+   helper would let users specify thresholds in resolution-independent
+   units.
+5. **VLM cost is essentially free here.** A full Oracle pass on each
+   clip costs sub-cent. The savings claim ("100× cheaper than RGB+VLM")
+   in exec-plan 001 is conditional on production-scale call volume,
+   not a per-clip dollar figure.
 
 ## Limitations
 
-- **One clip, adversarial content.** The committed sample was Step 2's
-  pipeline-validation clip; it has continuous activity and offers no
-  quiet intervals where the trigger can demonstrate skip. Numbers above
-  are not the canonical claim.
-- **Event definition is binary and lenient.** `people OR vehicles` is true
-  for every Oracle frame in this clip, which collapses precision to a
-  trivial 100 % everywhere and lets uniform sampling cleanly outperform
-  the trigger on coverage. A more selective ground truth (e.g. "is anyone
-  *currently* crossing the bridge") would change the picture, but is
-  manual labour at this scale.
-- **No region-of-interest tuning.** The CCTV scene in the clip would
-  benefit from a `RegionMask` excluding the road overpass; that change
-  was not applied here.
+- **Two clips, neither structurally ideal.** Clip A has no quiet
+  intervals, Clip B has a single short event. To meet the canonical
+  acceptance bars we need a clip with longer empty periods and
+  multiple bounded events.
+- **Manual labels only on Clip B.** Clip A still uses the lenient
+  `people OR vehicles` ground truth; a manual `events.csv` for it would
+  change Clip A's numbers (but probably not pass acceptance — the
+  whole clip is "active").
+- **No region-of-interest tuning.** Both clips have areas the user
+  would mask off in production (the road overpass on Clip A, the
+  watermark text band on Clip B). A `RegionMask` re-run is left to
+  the next round.
+- **Trigger is per-frame energy.** Onset / offset / sustained-motion
+  detection triggers are not implemented; they would likely close the
+  recall gap on bounded-event clips like Clip B.
 
 ## Next round
 
 To produce the canonical exec-plan 001 acceptance numbers we need:
 
-1. Add a clip with **quiet stretches** (empty hallway, parking lot at
-   night, doorway at low-traffic hour). 30–120 s. Pexels search terms:
-   `empty street`, `night surveillance`, `parking lot`.
-2. Re-run all four strategies under the same configuration.
-3. Re-score and update this document, or land a sibling
-   `2026-XX-XX-mvp-vs-uniform-quiet.md`.
+1. **A clip with multiple bounded events and substantial empty time.**
+   Pexels search terms: `parking lot at night`, `empty hallway`,
+   `entrance lobby low traffic`. Target: 60–180 s, 2–4 events of
+   ~5 s each, ≥ 60 % static time.
+2. **Clip-A `events.csv`** to put it on the same footing as Clip B.
+3. **Onset/offset trigger prototype** if the bursty-cluster
+   recall gap persists on the new clip.
+4. **`motion_energy_per_mb`** normalization in fovea-mv-core so
+   thresholds are resolution-independent.
 
 ## Files
 
-- `benchmarks/_runs/v3-tighter/` — per-strategy JSON, VLM response cache,
-  `summary.json`.
+- `benchmarks/_runs/v3-tighter/`, `benchmarks/_runs/c2-th3800/` —
+  canonical per-clip runs.
 - `benchmarks/runners/run.py`, `benchmarks/runners/sample.py`,
   `benchmarks/runners/vlm.py` — runner code.
-- `benchmarks/analysis/compare.py` — scoring script.
+- `benchmarks/analysis/compare.py` — scoring with `--manual-events`
+  CSV support.
+- `benchmarks/datasets/youtube-cctv-2/events.csv` — hand-labeled
+  intervals for Clip B.

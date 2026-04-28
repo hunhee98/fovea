@@ -1,0 +1,6 @@
+# Hand-labeled event intervals for benchmarks/datasets/youtube-cctv-2/sample.mp4.
+# Format: start_s,end_s,label
+# Inclusive bounds in clip seconds. Used by benchmarks/analysis/compare.py
+# --manual-events to score recall/precision against a non-trivial ground
+# truth. Without this file, compare.py falls back to motion-verb keywords.
+13,36,white SUV maneuvers through garage

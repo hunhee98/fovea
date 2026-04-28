@@ -140,16 +140,37 @@ class VlmClient:
         if cached := self._load_cache(key):
             return cached
 
+        # Retry on 5xx and rate-limit. Gemini occasionally returns 503 under
+        # load — exponential backoff up to ~60s total.
+        from google.genai import errors as genai_errors  # type: ignore[import-not-found]
+
+        delays = [2, 5, 10, 20, 30]
+        last_err: Exception | None = None
         start = time.time()
-        resp = self._client.models.generate_content(
-            model=self._model,
-            contents=[
-                {"role": "user", "parts": [
-                    {"text": PROMPT},
-                    {"inline_data": {"mime_type": "image/jpeg", "data": image_bytes}},
-                ]},
-            ],
-        )
+        resp = None
+        for delay in [0, *delays]:
+            if delay:
+                time.sleep(delay)
+            try:
+                resp = self._client.models.generate_content(
+                    model=self._model,
+                    contents=[
+                        {"role": "user", "parts": [
+                            {"text": PROMPT},
+                            {"inline_data": {"mime_type": "image/jpeg", "data": image_bytes}},
+                        ]},
+                    ],
+                )
+                break
+            except (genai_errors.ServerError, genai_errors.ClientError) as e:
+                code = getattr(e, "code", 0) or 0
+                if code in (429, 500, 502, 503, 504):
+                    last_err = e
+                    continue
+                raise
+        if resp is None:
+            assert last_err is not None
+            raise last_err
         latency_ms = (time.time() - start) * 1000.0
         text = (resp.text or "").strip()
 
