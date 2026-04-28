@@ -28,6 +28,14 @@ class MotionTrigger:
         min_duration_ms: int = 0,
         mask: Optional[RegionMask] = None,
     ) -> None: ...
+    @classmethod
+    def per_mb(
+        cls,
+        threshold_per_mb: float,
+        *,
+        min_duration_ms: int = 0,
+        mask: Optional[RegionMask] = None,
+    ) -> MotionTrigger: ...
 
 class IntervalTrigger:
     def __init__(self, max_gap_ms: int) -> None: ...

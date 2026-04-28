@@ -91,6 +91,24 @@ def test_decode_after_advance_raises() -> None:
         first.decode()
 
 
+def test_motion_trigger_per_mb_equivalent_to_calibrated_absolute() -> None:
+    """`MotionTrigger.per_mb(t / total_mb)` fires identically to `MotionTrigger(t)`."""
+    path = _require_sample()
+    s = Stream.from_file(str(path))
+    info = s.info()
+    total_mb = ((info.width + 15) // 16) * ((info.height + 15) // 16)
+    abs_threshold = 200_000
+
+    n_abs = sum(1 for _ in Stream.from_file(str(path)).events([MotionTrigger(abs_threshold)]))
+    n_per = sum(
+        1
+        for _ in Stream.from_file(str(path)).events(
+            [MotionTrigger.per_mb(abs_threshold / total_mb)]
+        )
+    )
+    assert n_abs == n_per, f"absolute({abs_threshold}) and calibrated per_mb diverged: {n_abs} vs {n_per}"
+
+
 def test_fast_decode_kwarg_accepted() -> None:
     """`fast_decode=True` enables A' skip flags. MV output unchanged."""
     path = _require_sample()

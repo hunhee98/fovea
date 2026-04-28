@@ -79,9 +79,17 @@ impl PyRegionMask {
 }
 
 /// Fires once per above-threshold motion-energy episode.
+///
+/// Two threshold modes:
+/// - `MotionTrigger(absolute_threshold)`: compare against
+///   `motion_energy(packet.mvs)`. Frame-area dependent.
+/// - `MotionTrigger.per_mb(threshold_per_mb)`: compare against
+///   `motion_energy / packet.total_mb`. Resolution-independent and the
+///   recommended path for cross-clip configurations.
 #[pyclass(name = "MotionTrigger")]
 struct PyMotionTrigger {
-    energy_threshold: u64,
+    absolute_threshold: Option<u64>,
+    per_mb_threshold: Option<f32>,
     min_duration_ms: u32,
     mask: Option<PyRegionMask>,
 }
@@ -92,17 +100,45 @@ impl PyMotionTrigger {
     #[pyo3(signature = (energy_threshold, *, min_duration_ms = 0, mask = None))]
     fn new(energy_threshold: u64, min_duration_ms: u32, mask: Option<PyRegionMask>) -> Self {
         Self {
-            energy_threshold,
+            absolute_threshold: Some(energy_threshold),
+            per_mb_threshold: None,
+            min_duration_ms,
+            mask,
+        }
+    }
+
+    /// Construct with a per-macroblock energy threshold.
+    ///
+    /// Resolution-independent. Convert from an absolute `T` known to work
+    /// on a `W × H` clip: ``T / ceil(W/16) / ceil(H/16)``.
+    #[classmethod]
+    #[pyo3(signature = (threshold_per_mb, *, min_duration_ms = 0, mask = None))]
+    fn per_mb(
+        _cls: &Bound<'_, PyType>,
+        threshold_per_mb: f32,
+        min_duration_ms: u32,
+        mask: Option<PyRegionMask>,
+    ) -> Self {
+        Self {
+            absolute_threshold: None,
+            per_mb_threshold: Some(threshold_per_mb),
             min_duration_ms,
             mask,
         }
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "MotionTrigger(energy_threshold={}, min_duration_ms={})",
-            self.energy_threshold, self.min_duration_ms
-        )
+        match (self.absolute_threshold, self.per_mb_threshold) {
+            (Some(t), _) => format!(
+                "MotionTrigger(energy_threshold={}, min_duration_ms={})",
+                t, self.min_duration_ms
+            ),
+            (_, Some(t)) => format!(
+                "MotionTrigger.per_mb(threshold_per_mb={}, min_duration_ms={})",
+                t, self.min_duration_ms
+            ),
+            _ => "MotionTrigger(<unset>)".into(),
+        }
     }
 }
 
@@ -150,8 +186,16 @@ impl PySceneChangeTrigger {
 /// Convert a Python trigger object into the internal `TriggerImpl`.
 fn build_trigger(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<TriggerImpl> {
     if let Ok(t) = obj.extract::<PyRef<PyMotionTrigger>>() {
-        let mut inner = RsMotionTrigger::new(t.energy_threshold)
-            .with_min_duration_ms(t.min_duration_ms);
+        let mut inner = match (t.absolute_threshold, t.per_mb_threshold) {
+            (Some(abs), _) => RsMotionTrigger::new(abs),
+            (_, Some(per)) => RsMotionTrigger::with_per_mb_threshold(per),
+            _ => {
+                return Err(PyValueError::new_err(
+                    "MotionTrigger must have an absolute or per-MB threshold",
+                ))
+            }
+        }
+        .with_min_duration_ms(t.min_duration_ms);
         if let Some(m) = t.mask {
             inner = inner.with_mask(m.inner);
         }

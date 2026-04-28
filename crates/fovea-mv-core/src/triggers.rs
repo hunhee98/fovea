@@ -38,10 +38,26 @@ impl RegionMask {
     }
 }
 
+/// How [`MotionTrigger`] interprets its threshold.
+///
+/// Absolute thresholds are simple but scale with frame area: a value tuned
+/// for a 1080p source will not fire at all on a 360p downscale of the same
+/// content. Per-MB thresholds normalize by macroblock count and stay valid
+/// across resolutions.
+#[derive(Debug, Clone, Copy)]
+pub enum ThresholdMode {
+    /// Sum of L1 magnitudes / motion_scale, summed over all (or masked) MVs.
+    /// Direct interpretation of [`motion_energy`].
+    Absolute(u64),
+    /// `motion_energy / total_mb`, in units of "energy per macroblock".
+    /// Resolution-independent. Floored to integer when comparing.
+    PerMb(f32),
+}
+
 /// Motion-energy trigger.
 ///
 /// Fires once per "above-threshold episode": the first packet whose energy
-/// has been at-or-above `energy_threshold` continuously for at least
+/// has been at-or-above the threshold continuously for at least
 /// `min_duration_ms` produces an event. The trigger then re-arms only after
 /// energy drops back below the threshold.
 ///
@@ -49,8 +65,8 @@ impl RegionMask {
 /// region contribute to the energy. Useful for ignoring fixed moving zones
 /// (e.g. a flag, a clock).
 pub struct MotionTrigger {
-    /// L1-magnitude threshold (units: pixels — see [`motion_energy`]).
-    pub energy_threshold: u64,
+    /// Threshold and the mode in which it is compared.
+    pub threshold: ThresholdMode,
     /// Minimum continuous time above threshold before firing, in
     /// milliseconds.
     pub min_duration_ms: u32,
@@ -61,10 +77,23 @@ pub struct MotionTrigger {
 }
 
 impl MotionTrigger {
-    /// Construct with no region mask and zero minimum duration.
+    /// Construct with an absolute energy threshold (frame-area dependent).
     pub fn new(energy_threshold: u64) -> Self {
+        Self::with_threshold(ThresholdMode::Absolute(energy_threshold))
+    }
+
+    /// Construct with a per-macroblock energy threshold (resolution-independent).
+    ///
+    /// Convert from an absolute `T` known to work on a `W × H` clip:
+    /// `per_mb = T / ceil(W/16) / ceil(H/16)`.
+    pub fn with_per_mb_threshold(threshold_per_mb: f32) -> Self {
+        Self::with_threshold(ThresholdMode::PerMb(threshold_per_mb))
+    }
+
+    /// Construct with an explicit [`ThresholdMode`].
+    pub fn with_threshold(mode: ThresholdMode) -> Self {
         Self {
-            energy_threshold,
+            threshold: mode,
             min_duration_ms: 0,
             mask: None,
             above_since_us: None,
@@ -99,12 +128,30 @@ impl MotionTrigger {
             }
         }
     }
+
+    fn absolute_threshold_for(&self, packet: &MvPacket) -> u64 {
+        match self.threshold {
+            ThresholdMode::Absolute(t) => t,
+            ThresholdMode::PerMb(per) => {
+                if per <= 0.0 {
+                    return 0;
+                }
+                if packet.total_mb == 0 {
+                    // Defensive: an empty `total_mb` means we don't know the
+                    // frame area. Refuse to fire rather than fire trivially.
+                    return u64::MAX;
+                }
+                (per * packet.total_mb as f32) as u64
+            }
+        }
+    }
 }
 
 impl Trigger for MotionTrigger {
     fn evaluate(&mut self, packet: &MvPacket) -> Option<Event> {
         let energy = self.energy_for(&packet.mvs);
-        if energy >= self.energy_threshold {
+        let threshold = self.absolute_threshold_for(packet);
+        if energy >= threshold {
             let started = *self.above_since_us.get_or_insert(packet.ts_us);
             let duration_us = packet.ts_us.saturating_sub(started);
             let needed_us = (self.min_duration_ms as i64) * 1_000;
@@ -307,6 +354,54 @@ mod tests {
         assert!(t.evaluate(&p1).is_none());
         assert!(t.evaluate(&p2).is_none());
         assert!(t.evaluate(&p3).is_some());
+    }
+
+    #[test]
+    fn motion_per_mb_threshold_resolution_independent() {
+        // Per-MB threshold of 1.0 means: fire when energy >= total_mb.
+        // 100 MBs → fires when energy >= 100.
+        // 8160 MBs → fires when energy >= 8160.
+        // So same trigger config behaves consistently across resolutions.
+        let mut trig = MotionTrigger::with_per_mb_threshold(1.0);
+
+        let small = MvPacket {
+            ts_us: 0,
+            frame_type: FrameType::P,
+            total_mb: 100,
+            intra_count: 0,
+            mvs: vec![mv(150, 0, 0, 0)], // energy = 150/4 = 37 < 100
+        };
+        assert!(trig.evaluate(&small).is_none());
+        // Now provide enough MVs to exceed 100.
+        let mut big_mvs = Vec::new();
+        for _ in 0..30 {
+            big_mvs.push(mv(20, 20, 0, 0)); // each contributes 40/4 = 10
+        }
+        let small_active = MvPacket {
+            ts_us: 33_000,
+            frame_type: FrameType::P,
+            total_mb: 100,
+            intra_count: 0,
+            mvs: big_mvs,
+        };
+        // energy = 30 * 10 = 300 >= 100 ✓
+        let ev = trig.evaluate(&small_active).expect("must fire");
+        assert_eq!(ev.energy, 300);
+    }
+
+    #[test]
+    fn motion_per_mb_zero_total_does_not_fire() {
+        // Defensive: if total_mb == 0 we cannot compute a per-MB threshold,
+        // so the trigger refuses to fire rather than fire on every packet.
+        let mut trig = MotionTrigger::with_per_mb_threshold(1.0);
+        let p = MvPacket {
+            ts_us: 0,
+            frame_type: FrameType::P,
+            total_mb: 0,
+            intra_count: 0,
+            mvs: vec![mv(40, 40, 0, 0)],
+        };
+        assert!(trig.evaluate(&p).is_none());
     }
 
     #[test]
