@@ -5,6 +5,14 @@ members = [
     "crates/fovea-mv-stream",
     "crates/fovea-mv-py",
 ]
+# fovea-mv-py is a cdylib that links via maturin's Python integration.
+# Plain `cargo build --workspace` cannot link it on macOS/Linux without
+# maturin scaffolding, so exclude it from default workspace operations.
+# Build it explicitly via `maturin develop` in step 4.
+default-members = [
+    "crates/fovea-mv-core",
+    "crates/fovea-mv-stream",
+]
 
 [workspace.package]
 edition = "2021"
@@ -17,3 +25,17 @@ authors = ["Hunhee Lee"]
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
+ffmpeg-next = "8.1"
+ffmpeg-sys-next = "8.1"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+proptest = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = false
+
+[profile.bench]
+lto = "thin"
+codegen-units = 1
+debug = true
