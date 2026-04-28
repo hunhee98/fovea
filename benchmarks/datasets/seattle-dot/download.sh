@@ -57,6 +57,7 @@ ffmpeg -y -loglevel error \
   -t "$DURATION_S" \
   -c copy \
   -movflags +faststart \
+  -f mp4 \
   "$OUT.part"
 mv "$OUT.part" "$OUT"
 
