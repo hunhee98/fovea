@@ -66,3 +66,4 @@ scripts/soak.py
 !.claude/
 .claude/memory/
 .claude/scheduled_tasks.lock
+.claude/worktrees/

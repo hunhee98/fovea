@@ -52,6 +52,52 @@ impl PbInfo {
     }
 }
 
+/// Frame-level coding-block prediction-mode aggregate, mirroring
+/// `de265_CB_stats`. Reads PredMode directly from the decoder's
+/// `cb_info` (zero decoder-path changes, see
+/// `vendor/libde265/libde265/de265_internals.cc`).
+///
+/// In a P / B slice (`slice_type_first` of 0 or 1), `intra_pixels /
+/// total_pixels` measures the fraction of the frame the encoder coded
+/// as intra — the direct, non-heuristic version of what the existing
+/// HEVC path derives from "no reference frame ⇒ intra".
+///
+/// `slice_type_first`: 0 = B, 1 = P, 2 = I, -1 = unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CbStats {
+    pub total_cells: u32,
+    pub intra_cells: u32,
+    pub inter_cells: u32,
+    pub skip_cells: u32,
+    pub intra_pixels: u64,
+    pub inter_pixels: u64,
+    pub skip_pixels: u64,
+    pub total_pixels: u64,
+    pub slice_type_first: i32,
+}
+
+impl CbStats {
+    /// `intra_pixels / total_pixels`, 0.0 when the frame is empty.
+    pub fn intra_ratio(&self) -> f32 {
+        if self.total_pixels == 0 {
+            0.0
+        } else {
+            self.intra_pixels as f32 / self.total_pixels as f32
+        }
+    }
+
+    /// `skip_pixels / total_pixels`. Encoder said "this region didn't
+    /// change at all" — a strong idle signal that the existing
+    /// heuristic path can't surface.
+    pub fn skip_ratio(&self) -> f32 {
+        if self.total_pixels == 0 {
+            0.0
+        } else {
+            self.skip_pixels as f32 / self.total_pixels as f32
+        }
+    }
+}
+
 /// Owned libde265 decoder.
 pub struct HevcDecoder {
     ctx: NonNull<ffi::de265_decoder_context>,
@@ -193,6 +239,26 @@ impl<'a> DecodedFrame<'a> {
             );
         }
         (w as u32, h as u32, log2u as u32)
+    }
+
+    /// Frame-level CB prediction-mode aggregate. One C call, no
+    /// allocation beyond the small return struct.
+    pub fn cb_stats(&self) -> CbStats {
+        let mut raw: ffi::de265_CB_stats = unsafe { std::mem::zeroed() };
+        unsafe {
+            ffi::de265_internals_get_CB_stats(self.raw, &mut raw as *mut _);
+        }
+        CbStats {
+            total_cells: raw.total_cells,
+            intra_cells: raw.intra_cells,
+            inter_cells: raw.inter_cells,
+            skip_cells: raw.skip_cells,
+            intra_pixels: raw.intra_pixels,
+            inter_pixels: raw.inter_pixels,
+            skip_pixels: raw.skip_pixels,
+            total_pixels: raw.total_pixels,
+            slice_type_first: raw.slice_type_first,
+        }
     }
 
     /// Pull all PB-cell motion entries in raster order.
