@@ -45,3 +45,8 @@ benchmarks/datasets/**/*.h265
 # Claude
 .claude/settings.local.json
 .claude/launch.json
+
+# Secrets (API keys, etc.)
+.env
+.env.*
+!.env.example
