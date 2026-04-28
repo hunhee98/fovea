@@ -230,6 +230,44 @@ fn mp4_to_annexb_if_needed(input: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Convert a `hvcC` extradata blob (ISO/IEC 14496-15 §8) into a
+/// concatenated Annex-B byte stream. Returns `Err` if the blob is
+/// truncated or the configurationVersion field is not 1.
+fn hvcc_extradata_to_annexb(hvcc: &[u8]) -> std::result::Result<Vec<u8>, &'static str> {
+    // Fixed-size hvcC header is 22 bytes; numOfArrays follows at offset 22.
+    if hvcc.len() < 23 {
+        return Err("hvcC extradata shorter than 23 bytes");
+    }
+    if hvcc[0] != 1 {
+        return Err("hvcC configurationVersion != 1");
+    }
+    let num_arrays = hvcc[22] as usize;
+    let mut out = Vec::with_capacity(hvcc.len() + num_arrays * 4);
+    let mut p = 23usize;
+    for _ in 0..num_arrays {
+        if p + 3 > hvcc.len() {
+            return Err("hvcC truncated array header");
+        }
+        // hvcc[p]: array_completeness | reserved | NAL_unit_type — ignored.
+        let num_nalus = u16::from_be_bytes([hvcc[p + 1], hvcc[p + 2]]) as usize;
+        p += 3;
+        for _ in 0..num_nalus {
+            if p + 2 > hvcc.len() {
+                return Err("hvcC truncated NAL length field");
+            }
+            let nal_len = u16::from_be_bytes([hvcc[p], hvcc[p + 1]]) as usize;
+            p += 2;
+            if p + nal_len > hvcc.len() {
+                return Err("hvcC truncated NAL payload");
+            }
+            out.extend_from_slice(&[0, 0, 0, 1]);
+            out.extend_from_slice(&hvcc[p..p + nal_len]);
+            p += nal_len;
+        }
+    }
+    Ok(out)
+}
+
 /// `true` if the underlying error originated from the network layer (socket
 /// reset, host unreachable, etc.).
 fn is_network_class_error(e: &ffmpeg::Error) -> bool {
@@ -349,8 +387,32 @@ impl FfmpegSource {
                 DecoderBackend::H264(context.decoder().video()?)
             }
             ffmpeg::codec::Id::HEVC => {
-                let dec = hevc::HevcDecoder::new()
+                let mut dec = hevc::HevcDecoder::new()
                     .map_err(|_| SourceError::Hevc(String::from("libde265 init failed")))?;
+                // Push hvcC parameter sets up front for mp4-muxed inputs.
+                // Raw .h265 streams have inline VPS/SPS/PPS so extradata
+                // is empty there.
+                // SAFETY: codec_params alive; extradata pointer + size
+                // are read-only fields on AVCodecParameters.
+                let extradata: Vec<u8> = unsafe {
+                    let raw = codec_params.as_ptr();
+                    let p = (*raw).extradata;
+                    let n = (*raw).extradata_size as usize;
+                    if p.is_null() || n == 0 {
+                        Vec::new()
+                    } else {
+                        std::slice::from_raw_parts(p, n).to_vec()
+                    }
+                };
+                if !extradata.is_empty() {
+                    let annexb = hvcc_extradata_to_annexb(&extradata).map_err(|msg| {
+                        SourceError::Hevc(format!("hvcC parse failed: {msg}"))
+                    })?;
+                    dec.push(&annexb).map_err(|e| {
+                        SourceError::Hevc(format!("push hvcC parameter sets: {e}"))
+                    })?;
+                    dec.push_end_of_nal();
+                }
                 DecoderBackend::Hevc(dec)
             }
             _ => return Err(SourceError::UnsupportedCodec(codec_id)),
@@ -546,6 +608,8 @@ impl FfmpegSource {
                     if let DecoderBackend::Hevc(d) = &mut self.backend {
                         d.push(&annexb)
                             .map_err(|e| SourceError::Hevc(format!("{e}")))?;
+                        // Each FFmpeg packet is one access unit of NALs.
+                        d.push_end_of_nal();
                     }
                 }
                 Err(ffmpeg::Error::Eof) => {

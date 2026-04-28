@@ -11,14 +11,16 @@ use fovea_mv_core::FrameType;
 use fovea_mv_stream::FfmpegSource;
 
 fn hevc_path() -> PathBuf {
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.pop();
-    p.pop();
-    // Raw Annex-B bitstream — VPS/SPS/PPS are inline, so libde265
-    // initializes without extradata. The mp4-muxed sibling needs hvcC
-    // extradata conversion which is queued for a follow-up step.
-    p.push("benchmarks/datasets/cctv-sample-hevc/sample.h265");
-    p
+    let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    root.pop();
+    root.pop();
+    // Prefer the mp4-muxed fixture (exercises the hvcC extradata
+    // path); fall back to raw Annex-B if only the .h265 sibling exists.
+    let mp4 = root.join("benchmarks/datasets/cctv-sample-hevc/sample.mp4");
+    if mp4.exists() {
+        return mp4;
+    }
+    root.join("benchmarks/datasets/cctv-sample-hevc/sample.h265")
 }
 
 #[test]

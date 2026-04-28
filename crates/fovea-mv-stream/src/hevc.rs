@@ -98,6 +98,22 @@ impl HevcDecoder {
         check(err)
     }
 
+    /// Signal that the buffer just pushed completes a NAL unit. libde265
+    /// parses NAL boundaries from Annex-B start codes, but if we hand it
+    /// only one NAL with no trailing start code it treats the buffer as
+    /// "more bytes coming". For mp4-derived input we know the boundary
+    /// after every push and signal it explicitly.
+    pub fn push_end_of_nal(&mut self) {
+        // SAFETY: returns void; handle valid.
+        unsafe { ffi::de265_push_end_of_NAL(self.ctx.as_ptr()) };
+    }
+
+    /// Signal end of an access unit (frame).
+    pub fn push_end_of_frame(&mut self) {
+        // SAFETY: returns void; handle valid.
+        unsafe { ffi::de265_push_end_of_frame(self.ctx.as_ptr()) };
+    }
+
     /// One iteration of libde265's "decode/display" loop. Returns the
     /// `more` hint plus an optional picture pointer if one is ready.
     /// Picture pointers are **borrowed** — invalidated by the next
@@ -105,15 +121,14 @@ impl HevcDecoder {
     pub fn decode_step(&mut self) -> HevcResult<(bool, Option<DecodedFrame<'_>>)> {
         let mut more: i32 = 0;
         // SAFETY: handle valid; `more` is an out-param scalar.
-        let err = unsafe { ffi::de265_decode(self.ctx.as_ptr(), &mut more as *mut _) };
-        // DE265_ERROR_WAITING_FOR_INPUT_DATA is libde265's polite way of
-        // saying "feed me more bytes" — not a hard failure. Treat it as a
-        // valid "no progress yet" outcome.
-        if err != ffi::de265_error_DE265_OK
-            && err != ffi::de265_error_DE265_ERROR_WAITING_FOR_INPUT_DATA
-        {
-            check(err)?;
-        }
+        let _err = unsafe { ffi::de265_decode(self.ctx.as_ptr(), &mut more as *mut _) };
+        // libde265 returns transient errors during normal operation —
+        // "waiting for input data", "coded parameter out of range" mid-
+        // stream when initialization NALs haven't been processed yet,
+        // checksum mismatches when MV side data is what we want, etc.
+        // The C-level idiom (and what `dec265.cc` does) is to ignore
+        // the err and trust `next_picture` as the source-of-truth for
+        // produced frames. We mirror that here.
         // SAFETY: picture borrows from the decoder; lifetime is bounded
         // by the next decode_step call (which may free the picture).
         let pic = unsafe { ffi::de265_get_next_picture(self.ctx.as_ptr()) };
