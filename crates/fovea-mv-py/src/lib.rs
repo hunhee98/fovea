@@ -14,8 +14,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 
 use fovea_mv_core::triggers::{
-    IntervalTrigger as RsIntervalTrigger, MotionTrigger as RsMotionTrigger, RegionMask as RsRegionMask,
-    SceneChangeTrigger as RsSceneChangeTrigger, SpatialClusterTrigger as RsSpatialClusterTrigger,
+    FusionMode as RsFusionMode, FusionTrigger as RsFusionTrigger, IntervalTrigger as RsIntervalTrigger,
+    MotionTrigger as RsMotionTrigger, RegionMask as RsRegionMask, SceneChangeTrigger as RsSceneChangeTrigger,
+    SpatialClusterTrigger as RsSpatialClusterTrigger,
 };
 use fovea_mv_core::Trigger as RsTrigger;
 use fovea_mv_stream::{FfmpegSource, NetworkOptions, OpenOptions, RtspTransport, SourceError};
@@ -38,6 +39,7 @@ enum TriggerImpl {
     Interval(RsIntervalTrigger),
     SceneChange(RsSceneChangeTrigger),
     SpatialCluster(RsSpatialClusterTrigger),
+    Fusion(RsFusionTrigger),
 }
 
 impl TriggerImpl {
@@ -47,6 +49,7 @@ impl TriggerImpl {
             Self::Interval(t) => t.evaluate(packet),
             Self::SceneChange(t) => t.evaluate(packet),
             Self::SpatialCluster(t) => t.evaluate(packet),
+            Self::Fusion(t) => t.evaluate(packet),
         }
     }
 }
@@ -233,6 +236,75 @@ impl PySpatialClusterTrigger {
     }
 }
 
+/// Combined-signal trigger.
+///
+/// Wraps `FusionTrigger` from `fovea-mv-core`. Combines motion energy,
+/// intra-block ratio, and skip ratio in a single decision. See the
+/// Rust crate docs for the four-quadrant decision table.
+///
+/// Use `mode="any"` (recall-favoured) or `mode="all"` (precision).
+/// `motion_threshold` / `intra_threshold` set the per-signal cutoffs;
+/// pass `None` to ignore that signal in the decision.
+/// `skip_suppress` is a hard idle gate — when the encoder marks at
+/// least that fraction of the frame as MODE_SKIP (HEVC), the trigger
+/// returns no event regardless of the other signals.
+#[pyclass(name = "FusionTrigger")]
+struct PyFusionTrigger {
+    mode: RsFusionMode,
+    motion_threshold: Option<u64>,
+    intra_threshold: Option<f32>,
+    skip_suppress: Option<f32>,
+    cooldown_ms: u32,
+}
+
+#[pymethods]
+impl PyFusionTrigger {
+    #[new]
+    #[pyo3(signature = (
+        mode = "any",
+        *,
+        motion_threshold = None,
+        intra_threshold = None,
+        skip_suppress = None,
+        cooldown_ms = 100,
+    ))]
+    fn new(
+        mode: &str,
+        motion_threshold: Option<u64>,
+        intra_threshold: Option<f32>,
+        skip_suppress: Option<f32>,
+        cooldown_ms: u32,
+    ) -> PyResult<Self> {
+        let mode = match mode.to_ascii_lowercase().as_str() {
+            "any" | "anyof" | "any_of" => RsFusionMode::AnyOf,
+            "all" | "allof" | "all_of" => RsFusionMode::AllOf,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "FusionTrigger mode must be 'any' or 'all', got {other:?}"
+                )))
+            }
+        };
+        Ok(Self {
+            mode,
+            motion_threshold,
+            intra_threshold,
+            skip_suppress,
+            cooldown_ms,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        let mode = match self.mode {
+            RsFusionMode::AnyOf => "any",
+            RsFusionMode::AllOf => "all",
+        };
+        format!(
+            "FusionTrigger(mode={:?}, motion_threshold={:?}, intra_threshold={:?}, skip_suppress={:?}, cooldown_ms={})",
+            mode, self.motion_threshold, self.intra_threshold, self.skip_suppress, self.cooldown_ms
+        )
+    }
+}
+
 /// Convert a Python trigger object into the internal `TriggerImpl`.
 fn build_trigger(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<TriggerImpl> {
     if let Ok(t) = obj.extract::<PyRef<PyMotionTrigger>>() {
@@ -262,10 +334,22 @@ fn build_trigger(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<TriggerImpl
                 .with_cell_size_px(t.cell_size_px)
                 .with_cooldown_ms(t.cooldown_ms),
         ))
+    } else if let Ok(t) = obj.extract::<PyRef<PyFusionTrigger>>() {
+        let mut inner = RsFusionTrigger::new(t.mode).with_cooldown_ms(t.cooldown_ms);
+        if let Some(v) = t.motion_threshold {
+            inner = inner.with_motion_threshold(v);
+        }
+        if let Some(v) = t.intra_threshold {
+            inner = inner.with_intra_threshold(v);
+        }
+        if let Some(v) = t.skip_suppress {
+            inner = inner.with_skip_suppress(v);
+        }
+        Ok(TriggerImpl::Fusion(inner))
     } else {
         let _ = py;
         Err(PyValueError::new_err(
-            "expected MotionTrigger / IntervalTrigger / SceneChangeTrigger / SpatialClusterTrigger",
+            "expected MotionTrigger / IntervalTrigger / SceneChangeTrigger / SpatialClusterTrigger / FusionTrigger",
         ))
     }
 }
@@ -637,6 +721,7 @@ fn _fovea_mv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyIntervalTrigger>()?;
     m.add_class::<PySceneChangeTrigger>()?;
     m.add_class::<PySpatialClusterTrigger>()?;
+    m.add_class::<PyFusionTrigger>()?;
     m.add_class::<PyRegionMask>()?;
     Ok(())
 }

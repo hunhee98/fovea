@@ -22,6 +22,7 @@ See `docs/05.exec-plans/001-mvtrigger-mvp.md` for design notes.
 from ._fovea_mv import (  # type: ignore[import-not-found]
     Event,
     EventIterator,
+    FusionTrigger,
     IntervalTrigger,
     MotionTrigger,
     RegionMask,
@@ -35,6 +36,7 @@ from ._fovea_mv import (  # type: ignore[import-not-found]
 __all__ = [
     "Event",
     "EventIterator",
+    "FusionTrigger",
     "IntervalTrigger",
     "MotionTrigger",
     "RegionMask",

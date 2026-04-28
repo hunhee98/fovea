@@ -357,6 +357,160 @@ impl Trigger for SceneChangeTrigger {
     }
 }
 
+/// How [`FusionTrigger`] combines its constituent signal checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FusionMode {
+    /// Fire when **any** enabled signal crosses its threshold.
+    /// Maximizes recall; tolerates higher false-positive rate.
+    AnyOf,
+    /// Fire only when **all** enabled signals cross. Maximizes
+    /// precision; lower recall.
+    AllOf,
+}
+
+/// Trigger that combines motion energy, intra-block ratio, and skip
+/// ratio in a single decision.
+///
+/// Designed to live downstream of [`MotionTrigger`] and to act as the
+/// "production trigger" most callers would actually wire up. The four
+/// quadrants of (motion × intra) carry distinct semantic meanings —
+/// see `docs/05.exec-plans/004-positioning.md` P0.9 for the table —
+/// and `skip_suppress` adds an explicit "encoder said this region is
+/// unchanged" gate on top.
+///
+/// Decision order per packet:
+/// 1. If `skip_suppress` is set and `skip_ratio(packet) >= skip_suppress`,
+///    return `None` (idle gate).
+/// 2. Compute which configured signals are above their thresholds.
+/// 3. Fire per [`FusionMode`].
+/// 4. Apply cooldown.
+///
+/// Each threshold (`motion_threshold`, `intra_threshold`) is optional —
+/// `None` means the signal is not part of the decision.
+pub struct FusionTrigger {
+    /// How signals are combined.
+    pub mode: FusionMode,
+    /// Motion energy threshold (sum of L1 magnitudes / motion_scale).
+    /// `None` skips motion in the decision.
+    pub motion_threshold: Option<u64>,
+    /// Intra-coded macroblock fraction threshold in `[0.0, 1.0]`.
+    /// `None` skips intra in the decision.
+    pub intra_threshold: Option<f32>,
+    /// If set and `skip_ratio(packet) >= skip_suppress`, the trigger
+    /// returns `None` regardless of other signals. Hard idle gate.
+    pub skip_suppress: Option<f32>,
+    cooldown_us: i64,
+    last_fire_us: Option<i64>,
+}
+
+impl FusionTrigger {
+    /// Construct an `AnyOf` trigger with no thresholds set. Caller
+    /// must enable at least one of `motion_threshold` / `intra_threshold`
+    /// before this fires.
+    pub fn new(mode: FusionMode) -> Self {
+        Self {
+            mode,
+            motion_threshold: None,
+            intra_threshold: None,
+            skip_suppress: None,
+            cooldown_us: 100_000,
+            last_fire_us: None,
+        }
+    }
+
+    /// Enable the motion-energy signal at `threshold`.
+    pub fn with_motion_threshold(mut self, threshold: u64) -> Self {
+        self.motion_threshold = Some(threshold);
+        self
+    }
+
+    /// Enable the intra-ratio signal at `threshold` ∈ [0.0, 1.0].
+    pub fn with_intra_threshold(mut self, threshold: f32) -> Self {
+        self.intra_threshold = Some(threshold);
+        self
+    }
+
+    /// Set a hard idle gate. When `skip_ratio(packet) >= floor`, the
+    /// trigger never fires regardless of the other signals.
+    pub fn with_skip_suppress(mut self, floor: f32) -> Self {
+        self.skip_suppress = Some(floor);
+        self
+    }
+
+    /// Override the per-fire cooldown, in milliseconds.
+    pub fn with_cooldown_ms(mut self, ms: u32) -> Self {
+        self.cooldown_us = (ms as i64) * 1_000;
+        self
+    }
+}
+
+impl Trigger for FusionTrigger {
+    fn evaluate(&mut self, packet: &MvPacket) -> Option<Event> {
+        if matches!(packet.frame_type, FrameType::I | FrameType::Other) {
+            // I-frames carry intra_ratio = 1.0 by definition; firing on
+            // them would just spam every keyframe. Same exclusion as
+            // SceneChangeTrigger.
+            return None;
+        }
+
+        // Idle gate.
+        let skip_r = skip_ratio(packet);
+        if let Some(floor) = self.skip_suppress {
+            if skip_r >= floor {
+                return None;
+            }
+        }
+
+        let energy = motion_energy(&packet.mvs);
+        let intra_r = intra_ratio(packet);
+
+        let motion_ok = self.motion_threshold.map(|t| energy >= t);
+        let intra_ok = self.intra_threshold.map(|t| intra_r >= t);
+
+        // Collect just the signals the caller actually enabled.
+        let mut checks: Vec<bool> = Vec::with_capacity(2);
+        if let Some(b) = motion_ok {
+            checks.push(b);
+        }
+        if let Some(b) = intra_ok {
+            checks.push(b);
+        }
+        if checks.is_empty() {
+            // Neither signal configured — don't fire.
+            return None;
+        }
+
+        let fire = match self.mode {
+            FusionMode::AnyOf => checks.iter().any(|b| *b),
+            FusionMode::AllOf => checks.iter().all(|b| *b),
+        };
+        if !fire {
+            return None;
+        }
+
+        if let Some(prev) = self.last_fire_us {
+            if packet.ts_us.saturating_sub(prev) < self.cooldown_us {
+                return None;
+            }
+        }
+        self.last_fire_us = Some(packet.ts_us);
+
+        Some(Event {
+            ts_us: packet.ts_us,
+            frame_type: packet.frame_type,
+            trigger_name: self.name(),
+            energy,
+            intra_ratio: intra_r,
+            skip_ratio: skip_r,
+            mv_count: packet.mvs.len() as u32,
+        })
+    }
+
+    fn name(&self) -> &'static str {
+        "fusion"
+    }
+}
+
 /// Spatial-cluster trigger — fires when motion energy concentrates in a
 /// small region of the frame, suppresses motion that is uniformly
 /// scattered.
@@ -792,6 +946,80 @@ mod tests {
         let mut t = SpatialClusterTrigger::new(0, 0.0);
         let i = i_packet(0, 100);
         assert!(t.evaluate(&i).is_none(), "I-frames must not trigger spatial cluster");
+    }
+
+    // ----- FusionTrigger -----
+
+    #[test]
+    fn fusion_anyof_fires_on_motion_alone() {
+        // motion crosses, intra does not — AnyOf fires.
+        let mut t = FusionTrigger::new(FusionMode::AnyOf)
+            .with_motion_threshold(50)
+            .with_intra_threshold(0.5);
+        // intra=0/100=0.0 (below 0.5), but big motion energy
+        let pkt = p_packet(0, vec![mv(200, 0, 0, 0)], 0, 100); // energy = 200/4 = 50
+        assert!(t.evaluate(&pkt).is_some());
+    }
+
+    #[test]
+    fn fusion_anyof_fires_on_intra_alone() {
+        // intra crosses, motion does not — AnyOf fires. Models
+        // "lights flickered" / "new object" / "smoke" scenarios.
+        let mut t = FusionTrigger::new(FusionMode::AnyOf)
+            .with_motion_threshold(1_000_000)
+            .with_intra_threshold(0.3);
+        let pkt = p_packet(0, vec![], 50, 100); // intra=0.5, no motion
+        assert!(t.evaluate(&pkt).is_some());
+    }
+
+    #[test]
+    fn fusion_allof_requires_both() {
+        // Only motion crosses → AllOf does not fire.
+        let mut t = FusionTrigger::new(FusionMode::AllOf)
+            .with_motion_threshold(50)
+            .with_intra_threshold(0.5);
+        let pkt = p_packet(0, vec![mv(200, 0, 0, 0)], 0, 100);
+        assert!(t.evaluate(&pkt).is_none(), "AllOf must reject motion-only");
+    }
+
+    #[test]
+    fn fusion_allof_fires_when_both_cross() {
+        let mut t = FusionTrigger::new(FusionMode::AllOf)
+            .with_motion_threshold(50)
+            .with_intra_threshold(0.4);
+        // intra = 60/100 = 0.6, motion energy = 50
+        let pkt = p_packet(0, vec![mv(200, 0, 0, 0)], 60, 100);
+        assert!(t.evaluate(&pkt).is_some());
+    }
+
+    #[test]
+    fn fusion_skip_suppress_overrides_other_signals() {
+        // Both motion and intra would otherwise fire, but skip_ratio is
+        // at the suppress floor → no fire.
+        let mut t = FusionTrigger::new(FusionMode::AnyOf)
+            .with_motion_threshold(50)
+            .with_intra_threshold(0.3)
+            .with_skip_suppress(0.85);
+        let mut pkt = p_packet(0, vec![mv(200, 0, 0, 0)], 50, 100);
+        pkt.skip_count = 90; // skip_ratio = 0.90 ≥ 0.85
+        assert!(t.evaluate(&pkt).is_none(), "skip gate must suppress fire");
+    }
+
+    #[test]
+    fn fusion_no_thresholds_never_fires() {
+        // Neither signal configured → defensive no-fire.
+        let mut t = FusionTrigger::new(FusionMode::AnyOf);
+        let pkt = p_packet(0, vec![mv(200, 0, 0, 0)], 100, 100);
+        assert!(t.evaluate(&pkt).is_none());
+    }
+
+    #[test]
+    fn fusion_skips_iframe() {
+        let mut t = FusionTrigger::new(FusionMode::AnyOf)
+            .with_motion_threshold(0)
+            .with_intra_threshold(0.0);
+        let i = i_packet(0, 100);
+        assert!(t.evaluate(&i).is_none());
     }
 
     #[test]
