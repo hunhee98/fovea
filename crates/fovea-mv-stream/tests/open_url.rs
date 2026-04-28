@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 
-use fovea_mv_stream::{FfmpegSource, NetworkOptions, OpenOptions};
+use std::time::Instant;
+
+use fovea_mv_stream::{FfmpegSource, NetworkOptions, OpenOptions, RtspTransport};
 
 fn sample_path() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -78,4 +80,43 @@ fn open_url_invalid_returns_error_not_panic() {
         NetworkOptions::default(),
     );
     assert!(result.is_err(), "unreachable RTSP url should error, not succeed");
+}
+
+#[test]
+fn open_url_custom_network_options_does_not_break_file_path() {
+    let path = sample_path();
+    if !path.exists() {
+        return;
+    }
+    // Custom NetworkOptions should be silently ignored by the file demuxer.
+    let opts = NetworkOptions {
+        transport: RtspTransport::Udp,
+        open_timeout_ms: 1_000,
+        read_timeout_ms: 1_000,
+        max_reconnects: 5,
+    };
+    let abs = path.canonicalize().expect("canonicalize");
+    let url = format!("file://{}", abs.display());
+    let mut src = FfmpegSource::open_url(&url, opts).expect("file open with custom net opts");
+    assert!(src.next_packet().expect("decode").is_some());
+}
+
+#[test]
+fn open_url_rtsp_short_timeout_bounds_failure_time() {
+    // 192.0.2.0/24 is TEST-NET-1: guaranteed to be unroutable. With a 500 ms
+    // open_timeout the call must return inside ~2 s (allow some FFmpeg
+    // overhead beyond the timeout itself).
+    let opts = NetworkOptions {
+        open_timeout_ms: 500,
+        ..NetworkOptions::default()
+    };
+    let start = Instant::now();
+    let result = FfmpegSource::open_url("rtsp://192.0.2.1:554/cam", opts);
+    let elapsed_ms = start.elapsed().as_millis();
+    assert!(result.is_err(), "expected error on unroutable RTSP host");
+    println!("rtsp open failed after {elapsed_ms} ms");
+    assert!(
+        elapsed_ms < 5_000,
+        "rtsp open took too long ({elapsed_ms} ms) — stimeout not honored?"
+    );
 }

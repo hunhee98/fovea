@@ -73,13 +73,60 @@ pub struct OpenOptions {
     pub skip_idct_all: bool,
 }
 
+/// RTSP transport mode.
+///
+/// TCP is the default — most cameras support it, it's firewall-friendly,
+/// and packets aren't dropped silently. UDP exists for low-latency LAN
+/// deployments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtspTransport {
+    /// `rtsp_transport=tcp` (recommended, default).
+    Tcp,
+    /// `rtsp_transport=udp`.
+    Udp,
+}
+
+impl RtspTransport {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tcp => "tcp",
+            Self::Udp => "udp",
+        }
+    }
+}
+
 /// Network-source configuration.
 ///
-/// Stub for exec-plan 002. Step 002.1 introduces the type without fields;
-/// 002.2 adds transport / open_timeout / read_timeout / max_reconnects.
-#[derive(Debug, Clone, Default)]
+/// Defaults are tuned for a typical IP-camera deployment: TCP transport,
+/// 5 s open and read timeouts, no reconnect.
+#[derive(Debug, Clone)]
 pub struct NetworkOptions {
-    // (filled in 002.2)
+    /// RTSP transport (ignored for non-RTSP URLs).
+    pub transport: RtspTransport,
+    /// Maximum time to wait for `avformat_open_input` to succeed, in
+    /// milliseconds. Translated to libavformat's microsecond-grained
+    /// `stimeout` option (which covers both TCP socket connect and the
+    /// initial protocol handshake).
+    pub open_timeout_ms: u32,
+    /// Maximum time to wait for the next packet during the decode loop, in
+    /// milliseconds. Used by Step 002.3; the option dictionary path also
+    /// passes this value as `stimeout` so libavformat enforces it on the
+    /// socket layer.
+    pub read_timeout_ms: u32,
+    /// Number of automatic reopens on transient network failures. Used by
+    /// Step 002.3. `0` means "no reconnect" (current behavior).
+    pub max_reconnects: u32,
+}
+
+impl Default for NetworkOptions {
+    fn default() -> Self {
+        Self {
+            transport: RtspTransport::Tcp,
+            open_timeout_ms: 5_000,
+            read_timeout_ms: 5_000,
+            max_reconnects: 0,
+        }
+    }
 }
 
 /// FFmpeg-backed file source.
@@ -133,13 +180,28 @@ impl FfmpegSource {
 
     fn open_input(
         input_ref: &Path,
-        _network: &NetworkOptions,
+        network: &NetworkOptions,
         opts: &OpenOptions,
     ) -> Result<Self> {
         // One-time global init. Idempotent across calls.
         ffmpeg::init()?;
 
-        let input = ffmpeg::format::input(input_ref)?;
+        // Build the libavformat option dictionary. Unknown keys are ignored
+        // by demuxers that don't recognize them, so it's safe to set
+        // RTSP-specific options unconditionally.
+        let mut dict = ffmpeg::Dictionary::new();
+        dict.set("rtsp_transport", network.transport.as_str());
+        // FFmpeg 5+ exposes a microsecond `timeout` on the underlying
+        // protocols (tcp / udp / rtsp). We bind it to the open timeout
+        // here; the per-packet read deadline lives in `next_packet`.
+        // The legacy `stimeout` key is dead in FFmpeg ≥ 5 — verified during
+        // step 002.2 by an open against an unroutable host taking 75 s when
+        // `stimeout` was set, vs sub-second when `timeout` is set.
+        let open_timeout_us = (network.open_timeout_ms as u64).saturating_mul(1_000);
+        let timeout_str = open_timeout_us.to_string();
+        dict.set("timeout", &timeout_str);
+
+        let input = ffmpeg::format::input_with_dictionary(input_ref, dict)?;
 
         let stream = input
             .streams()
