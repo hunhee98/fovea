@@ -700,6 +700,22 @@ impl FfmpegSource {
             let intra_mb = (intra_pixels / 256) as u32;
             self.out_packet.intra_count = intra_mb.min(self.out_packet.total_mb);
         }
+
+        // Populate skip_count from the CB-stats accessor. This is the
+        // share of the frame the encoder coded as MODE_SKIP — a
+        // direct "this region didn't change" signal that PB info
+        // cannot expose (skip CUs carry merge-inherited motion data
+        // that is structurally identical to a regular inter CU at the
+        // PB level). We map CB-stats `skip_pixels` onto the same 16×16
+        // macroblock grid used for `total_mb` so trigger code can
+        // treat `skip_count` like `intra_count`. `intra_count` is
+        // still derived from the existing PB heuristic; switching its
+        // source is a downstream decision (see
+        // `benchmarks/results/2026-04-29-cb-stats-vs-pb-heuristic.md`).
+        let stats = frame.cb_stats();
+        let skip_mb = (stats.skip_pixels / 256) as u32;
+        self.out_packet.skip_count = skip_mb.min(self.out_packet.total_mb);
+
         Ok(Some(()))
     }
 

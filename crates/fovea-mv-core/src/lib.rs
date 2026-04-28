@@ -114,6 +114,13 @@ pub struct MvPacket {
     pub total_mb: u32,
     /// Macroblocks coded as intra. `intra_count == total_mb` for I-frames.
     pub intra_count: u32,
+    /// Macroblocks coded as MODE_SKIP. Currently populated only by the
+    /// HEVC path (via the libde265 `de265_internals_get_CB_stats`
+    /// accessor). H.264 leaves this at 0 — `+export_mvs` does not
+    /// expose skip information. A high `skip_count / total_mb` is the
+    /// encoder's explicit "this region didn't change" signal, useful
+    /// as an idle confidence boost for triggers.
+    pub skip_count: u32,
     /// All extracted motion vectors. Empty for I-frames.
     pub mvs: Vec<MotionVector>,
 }
@@ -126,6 +133,7 @@ impl MvPacket {
             frame_type: FrameType::Other,
             total_mb: 0,
             intra_count: 0,
+            skip_count: 0,
             mvs: Vec::new(),
         }
     }
@@ -136,6 +144,7 @@ impl MvPacket {
         self.frame_type = FrameType::Other;
         self.total_mb = 0;
         self.intra_count = 0;
+        self.skip_count = 0;
         self.mvs.clear();
     }
 }
@@ -157,6 +166,9 @@ pub struct Event {
     pub energy: u64,
     /// Fraction of macroblocks coded as intra in the firing packet (0.0..=1.0).
     pub intra_ratio: f32,
+    /// Fraction of macroblocks coded as MODE_SKIP in the firing packet
+    /// (0.0..=1.0). Populated for HEVC; always 0.0 for H.264 today.
+    pub skip_ratio: f32,
     /// Motion vector count in the firing packet.
     pub mv_count: u32,
 }
@@ -190,6 +202,17 @@ pub fn intra_ratio(packet: &MvPacket) -> f32 {
         0.0
     } else {
         packet.intra_count as f32 / packet.total_mb as f32
+    }
+}
+
+/// Ratio of MODE_SKIP macroblocks. 0.0 when `total_mb == 0` or when
+/// the source pipeline does not populate `skip_count` (H.264 today).
+#[inline]
+pub fn skip_ratio(packet: &MvPacket) -> f32 {
+    if packet.total_mb == 0 {
+        0.0
+    } else {
+        packet.skip_count as f32 / packet.total_mb as f32
     }
 }
 
@@ -244,9 +267,29 @@ mod tests {
             frame_type: FrameType::P,
             total_mb: 100,
             intra_count: 25,
+            skip_count: 0,
             mvs: vec![],
         };
         assert!((intra_ratio(&packet) - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn skip_ratio_basic() {
+        let packet = MvPacket {
+            ts_us: 0,
+            frame_type: FrameType::P,
+            total_mb: 100,
+            intra_count: 0,
+            skip_count: 80,
+            mvs: vec![],
+        };
+        assert!((skip_ratio(&packet) - 0.80).abs() < 1e-6);
+    }
+
+    #[test]
+    fn skip_ratio_handles_empty() {
+        let packet = MvPacket::empty();
+        assert_eq!(skip_ratio(&packet), 0.0);
     }
 
     #[test]
@@ -256,6 +299,7 @@ mod tests {
             frame_type: FrameType::P,
             total_mb: 100,
             intra_count: 5,
+            skip_count: 60,
             mvs: vec![mv(1, 2, 4); 50],
         };
         let cap = p.mvs.capacity();
@@ -264,6 +308,7 @@ mod tests {
         assert_eq!(p.frame_type, FrameType::Other);
         assert_eq!(p.total_mb, 0);
         assert_eq!(p.intra_count, 0);
+        assert_eq!(p.skip_count, 0);
         assert!(p.mvs.is_empty());
         assert_eq!(p.mvs.capacity(), cap);
     }

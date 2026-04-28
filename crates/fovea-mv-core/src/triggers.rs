@@ -11,7 +11,7 @@
 //! Composing multiple triggers is the caller's responsibility — the order in
 //! which they are evaluated determines which `Event` wins for a given packet.
 
-use crate::{intra_ratio, motion_energy, Event, FrameType, MotionVector, MvPacket, Trigger};
+use crate::{intra_ratio, motion_energy, skip_ratio, Event, FrameType, MotionVector, MvPacket, Trigger};
 
 /// Rectangular region of interest, used by [`MotionTrigger`] to ignore motion
 /// outside a fixed area of the frame.
@@ -163,6 +163,7 @@ impl Trigger for MotionTrigger {
                     trigger_name: self.name(),
                     energy,
                     intra_ratio: intra_ratio(packet),
+                    skip_ratio: skip_ratio(packet),
                     mv_count: packet.mvs.len() as u32,
                 });
             }
@@ -215,6 +216,7 @@ impl Trigger for IntervalTrigger {
                 trigger_name: self.name(),
                 energy: motion_energy(&packet.mvs),
                 intra_ratio: intra_ratio(packet),
+                skip_ratio: skip_ratio(packet),
                 mv_count: packet.mvs.len() as u32,
             });
         }
@@ -272,6 +274,7 @@ impl Trigger for SceneChangeTrigger {
                 trigger_name: self.name(),
                 energy: motion_energy(&packet.mvs),
                 intra_ratio: r,
+                skip_ratio: skip_ratio(packet),
                 mv_count: packet.mvs.len() as u32,
             });
         }
@@ -308,6 +311,7 @@ mod tests {
             frame_type: FrameType::P,
             total_mb: total,
             intra_count: intra,
+            skip_count: 0,
             mvs,
         }
     }
@@ -318,6 +322,7 @@ mod tests {
             frame_type: FrameType::I,
             total_mb: total,
             intra_count: total,
+            skip_count: 0,
             mvs: vec![],
         }
     }
@@ -369,6 +374,7 @@ mod tests {
             frame_type: FrameType::P,
             total_mb: 100,
             intra_count: 0,
+            skip_count: 0,
             mvs: vec![mv(150, 0, 0, 0)], // energy = 150/4 = 37 < 100
         };
         assert!(trig.evaluate(&small).is_none());
@@ -382,6 +388,7 @@ mod tests {
             frame_type: FrameType::P,
             total_mb: 100,
             intra_count: 0,
+            skip_count: 0,
             mvs: big_mvs,
         };
         // energy = 30 * 10 = 300 >= 100 ✓
@@ -399,6 +406,7 @@ mod tests {
             frame_type: FrameType::P,
             total_mb: 0,
             intra_count: 0,
+            skip_count: 0,
             mvs: vec![mv(40, 40, 0, 0)],
         };
         assert!(trig.evaluate(&p).is_none());

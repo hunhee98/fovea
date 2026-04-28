@@ -232,6 +232,7 @@ struct PyEvent {
     trigger_name: &'static str,
     energy: u64,
     intra_ratio: f32,
+    skip_ratio: f32,
     mv_count: u32,
     /// Back-reference to the source so `decode()` can pull RGB. The reference
     /// is valid only until the source advances or is dropped — see the
@@ -277,6 +278,15 @@ impl PyEvent {
         self.intra_ratio
     }
 
+    /// Fraction of macroblocks the encoder coded as MODE_SKIP (HEVC
+    /// only; H.264 leaves this at 0.0). High values are a direct
+    /// "this region didn't change" signal — useful as an idle
+    /// confidence indicator.
+    #[getter]
+    fn skip_ratio(&self) -> f32 {
+        self.skip_ratio
+    }
+
     #[getter]
     fn mv_count(&self) -> u32 {
         self.mv_count
@@ -314,12 +324,13 @@ impl PyEvent {
 
     fn __repr__(&self) -> String {
         format!(
-            "Event(timestamp_s={:.3}, frame_type='{}', trigger='{}', energy={}, intra_ratio={:.3}, mv_count={})",
+            "Event(timestamp_s={:.3}, frame_type='{}', trigger='{}', energy={}, intra_ratio={:.3}, skip_ratio={:.3}, mv_count={})",
             self.timestamp_s(),
             self.frame_type,
             self.trigger_name,
             self.energy,
             self.intra_ratio,
+            self.skip_ratio,
             self.mv_count,
         )
     }
@@ -547,6 +558,7 @@ impl PyEventIterator {
                     trigger_name: ev.trigger_name,
                     energy: ev.energy,
                     intra_ratio: ev.intra_ratio,
+                    skip_ratio: ev.skip_ratio,
                     mv_count: ev.mv_count,
                     source: self.source.clone(),
                     seq,
