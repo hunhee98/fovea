@@ -19,8 +19,8 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/hunheelee/fovea"
-Issues = "https://github.com/hunheelee/fovea/issues"
+Repository = "https://github.com/hunhee98/fovea"
+Issues = "https://github.com/hunhee98/fovea/issues"
 
 [tool.maturin]
 manifest-path = "../../crates/fovea-mv-py/Cargo.toml"

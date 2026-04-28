@@ -2,7 +2,7 @@
 
 H.264 motion-vector trigger engine. Decides which video frames deserve downstream VLM processing.
 
-Part of the [Fovea](https://github.com/hunheelee/fovea) monorepo. See the root README for context.
+Part of the [Fovea](https://github.com/hunhee98/fovea) monorepo. See the root README for context.
 
 ## Status
 
