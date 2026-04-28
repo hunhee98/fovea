@@ -16,6 +16,10 @@ help:
 install-hooks: ## Install fovea git hooks into .git/hooks (idempotent)
 	@bash scripts/git-hooks/install.sh
 
+.PHONY: install-bench-deps
+install-bench-deps: ## Install Python deps for benchmarks/ (psutil, dotenv, ...)
+	$(PY) -m pip install -r benchmarks/requirements.txt
+
 # ---------------------------------------------------------------------------
 # Verify (matches /verify skill)
 # ---------------------------------------------------------------------------
@@ -48,14 +52,17 @@ bench: ## Run the canonical accuracy bench (precision / recall / cost on cctv-sa
 
 .PHONY: density-bench
 density-bench: ## Multi-stream density bench (idle CPU%, RSS, sustainable streams)
-	@echo "TODO: density-bench harness lands with 0.2 — runner stub at benchmarks/runners/density.py"
-	@test -f benchmarks/runners/density.py || ( \
-	  echo ""; \
-	  echo "  benchmarks/runners/density.py is not implemented yet."; \
-	  echo "  See docs/03.methodology/density.md for spec."; \
-	  exit 1; \
-	)
-	$(PY) -m benchmarks.runners.density --streams 1,10,50,100 --duration-s 60
+	$(PY) -m benchmarks.runners.density \
+	    --source benchmarks/datasets/cctv-sample/sample.mp4 \
+	    --streams 1,4,16 \
+	    --duration-s 30
+
+.PHONY: density-bench-large
+density-bench-large: ## Density bench up to N=64 — slow, run when targeting 0.2 acceptance
+	$(PY) -m benchmarks.runners.density \
+	    --source benchmarks/datasets/cctv-sample/sample.mp4 \
+	    --streams 1,4,16,32,64 \
+	    --duration-s 60
 
 .PHONY: bench-baseline
 bench-baseline: ## Run bench against origin/main and current branch, print delta

@@ -1,0 +1,12 @@
+# Benchmark harness dependencies. Install with:
+#   .venv/bin/python -m pip install -r benchmarks/requirements.txt
+#
+# fovea-mv itself is built via maturin from packages/fovea-mv (not pip-installed
+# here — see Makefile target verify-py).
+
+numpy>=2.0
+opencv-python>=4.10
+pillow>=10.0
+psutil>=5.9
+python-dotenv>=1.0
+google-genai>=1.0
