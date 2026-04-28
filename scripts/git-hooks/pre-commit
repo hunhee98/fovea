@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# fovea pre-commit — exec-plan Status check + hot-path alloc grep on staged files.
+set -u
+
+fail=0
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
+# 1. Exec-plan Status: line required.
+while IFS= read -r f; do
+  case "$f" in
+    docs/05.exec-plans/*.md) ;;
+    *) continue ;;
+  esac
+  case "$f" in
+    docs/05.exec-plans/archive/*) continue ;;
+  esac
+  [ -f "$f" ] || continue
+  if ! head -10 "$f" | grep -qE '^Status:[[:space:]]+'; then
+    printf '%s\n' "[fovea] pre-commit blocked: $f missing 'Status:' line in first 10 lines."
+    fail=1
+  fi
+done <<EOF
+$staged
+EOF
+
+# 2. Hot-path alloc patterns in mv-core .rs.
+while IFS= read -r f; do
+  case "$f" in
+    crates/fovea-mv-core/*.rs) ;;
+    *) continue ;;
+  esac
+  [ -f "$f" ] || continue
+  # Only scan staged hunks. Use git diff --cached to extract added lines.
+  added=$(git diff --cached -U0 -- "$f" | grep -E '^\+' | grep -v '^+++' | sed 's/^+//')
+  hits=$(printf '%s\n' "$added" | grep -nE 'Box::new\(|vec!\[|String::from\(|format!\(|\.to_owned\(\)|\.to_string\(\)' \
+    | grep -v 'alloc-ok:' | head -5)
+  if [ -n "$hits" ]; then
+    printf '%s\n' "[fovea] pre-commit warning: hot-path alloc patterns added in $f"
+    printf '%s\n' "$hits"
+    printf '%s\n' "  → if intentional, append '// alloc-ok: <reason>' on the line."
+    # Warning, not block. Block requires bench evidence.
+  fi
+done <<EOF
+$staged
+EOF
+
+# 3. Citation format on docs/README — `[Author Year — arxiv:NNNN.NNNNN]` or `github.com/...`.
+# Looks for malformed inline citations (e.g. "[arxiv 1712.00636]" without dash).
+while IFS= read -r f; do
+  case "$f" in
+    *.md) ;;
+    *) continue ;;
+  esac
+  [ -f "$f" ] || continue
+  bad=$(grep -nE '\[arxiv[: ][0-9]+\.[0-9]+\]|\[arxiv[: ][0-9]+\.[0-9]+ ' "$f" | head -3)
+  if [ -n "$bad" ]; then
+    printf '%s\n' "[fovea] pre-commit warning: malformed citation in $f (use '[Author Year — arxiv:NNNN.NNNNN]'):"
+    printf '%s\n' "$bad"
+  fi
+done <<EOF
+$staged
+EOF
+
+exit "$fail"

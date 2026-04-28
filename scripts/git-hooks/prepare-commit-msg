@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# fovea prepare-commit-msg — strip Co-Authored-By and Generated-with-Claude-Code lines that
+# tools may auto-insert, before commit-msg validates them. Defense in depth.
+set -u
+msg_file="$1"
+src="${2:-}"
+
+# Skip merge/squash/template; only act on regular commit messages.
+case "$src" in
+  message|template|commit) exit 0 ;;
+esac
+
+# Filter out forbidden trailers. Keep everything else.
+tmp=$(mktemp)
+grep -vEi '^Co-Authored-By:|generated with claude code|🤖 generated with' "$msg_file" > "$tmp" || true
+mv "$tmp" "$msg_file"
+
+exit 0

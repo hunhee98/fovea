@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# fovea pre-push — branch prefix check + main-push block + hot-path bench gate.
+set -u
+
+# Read remote and url from args; ref info on stdin.
+# Format on stdin: <local_ref> <local_sha> <remote_ref> <remote_sha>
+remote="${1:-}"
+remote_url="${2:-}"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "$local_ref" ] && continue
+
+  # Strip refs/heads/ prefix.
+  branch="${local_ref#refs/heads/}"
+
+  # 1. Block push to main.
+  if [ "${remote_ref#refs/heads/}" = "main" ]; then
+    printf '%s\n' "[fovea] pre-push blocked: pushing to main is forbidden. open PR via gh pr create."
+    exit 1
+  fi
+
+  # 2. Branch prefix check (skip detached / tags / main itself).
+  if [ "$branch" != "main" ] && [ "$branch" != "HEAD" ]; then
+    if ! printf '%s' "$branch" | grep -qE '^(feat|fix|refactor|docs|chore|bench|perf)/[a-z0-9-]+'; then
+      printf '%s\n' "[fovea] pre-push blocked: branch '$branch' must start with feat/|fix/|refactor/|docs/|chore/|bench/|perf/"
+      exit 1
+    fi
+  fi
+
+  # 3. Hot-path bench gate.
+  # If commits being pushed touched crates/fovea-mv-core/ but no benchmarks/results/ change came along,
+  # warn. (Block-on-regression requires actually running bench; we keep it a warn here.)
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    range="$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+  files=$(git diff --name-only "$range" 2>/dev/null || echo "")
+  if printf '%s' "$files" | grep -q '^crates/fovea-mv-core/'; then
+    if ! printf '%s' "$files" | grep -q '^benchmarks/results/'; then
+      printf '%s\n' "[fovea] pre-push warning: mv-core changed but no benchmarks/results/ update in this push."
+      printf '%s\n' "  → run 'make density-bench' and commit the result file before /done if perf-relevant."
+    fi
+  fi
+done
+
+exit 0

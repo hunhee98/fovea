@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# fovea commit-msg — Conventional Commits + ban Co-Authored-By + ban Generated with Claude Code.
+set -u
+msg_file="$1"
+msg=$(cat "$msg_file")
+
+# Strip comment lines (git commentary).
+subject=$(printf '%s\n' "$msg" | grep -v '^#' | head -1)
+
+# Conventional Commits: <type>(<scope>)?: <subject>
+# Allowed types per CLAUDE.md: feat fix refactor docs chore bench perf test
+allowed='feat|fix|refactor|docs|chore|bench|perf|test'
+if ! printf '%s' "$subject" | grep -qE "^(${allowed})(\([a-z0-9-]+\))?!?: .+"; then
+  printf '%s\n' "[fovea] commit blocked: subject must match Conventional Commits."
+  printf '%s\n' "  expected: <type>(<scope>): <subject>"
+  printf '%s\n' "  type ∈ {feat, fix, refactor, docs, chore, bench, perf, test}"
+  printf '%s\n' "  scope ∈ {mv-core, mv-stream, mv-py, pick, stream, bench, docs, repo, examples, ...}"
+  printf '%s\n' "  got: $subject"
+  exit 1
+fi
+
+# Subject ≤ 72 chars (slack convention).
+if [ "${#subject}" -gt 72 ]; then
+  printf '%s\n' "[fovea] commit blocked: subject > 72 chars (${#subject})."
+  exit 1
+fi
+
+# Ban Co-Authored-By trailers (CLAUDE.md global rule).
+if printf '%s\n' "$msg" | grep -qiE '^Co-Authored-By:'; then
+  printf '%s\n' "[fovea] commit blocked: Co-Authored-By trailer is forbidden (CLAUDE.md)."
+  exit 1
+fi
+
+# Ban "Generated with Claude Code" footer.
+if printf '%s\n' "$msg" | grep -qiE 'generated with claude code|🤖 generated with'; then
+  printf '%s\n' "[fovea] commit blocked: 'Generated with Claude Code' footer is forbidden."
+  exit 1
+fi
+
+exit 0
