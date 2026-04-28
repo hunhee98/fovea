@@ -54,3 +54,9 @@ benchmarks/datasets/**/*.h265
 
 # Vendored libraries — commit source, not build artifacts.
 vendor/libde265/build/
+_soak/
+
+# Local-only stability scripts (contain personal LAN URLs / paths).
+# Recreated per-machine; not part of the public API.
+scripts/start-soak.sh
+scripts/soak.py
