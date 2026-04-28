@@ -37,11 +37,22 @@ The wedge against existing tools:
 | Frigate motion detector | pixel-diff in app | post-decode (decode cost paid up front), no global-motion handling, app-coupled |
 | OpenCV background subtraction | pixel-domain | post-decode, no encoder-side info |
 
-fovea-mv differentiates on three axes simultaneously:
+fovea-mv differentiates on four axes simultaneously:
 1. **Pre-decode gating** (bitstream → decision, no full decode in idle path).
 2. **Multi-channel concurrent** (Rust + no-GIL).
 3. **Trigger primitives included** (global motion subtraction, spatial
    cluster, threshold + debounce + cooldown — not raw MVs).
+4. **Compressed-domain fusion** — MV alone misses lighting changes, new
+   object appearance with no motion match, smoke / fire, and tampering
+   bursts. fovea-mv pairs MV with a second compressed-domain signal
+   (intra-block ratio / residual energy, depending on tier) to cover
+   those scenarios at bitstream cost. Prior art for the
+   MV-plus-residual combination as a useful joint feature: CoViAR
+   [arxiv 1712.00636], DMC-Net [arxiv 1901.03460]. The novelty here is
+   not the fusion idea but exposing it as a production-grade trigger
+   primitive in OSS — academic implementations target CNN feature
+   extraction, not thresholdable triggers, and Frigate / Viseron /
+   mv-extractor stop at MV because ffmpeg's public API does too.
 
 ## What we are claiming
 
@@ -172,6 +183,84 @@ need a working example to anchor them.
 
 **Effort:** 1–2 days.
 
+### P0.8 — Compressed-domain residual / intra-stats accessor (HEVC first)
+
+**Goal:** Expose a second bitstream-level signal beyond MV — at minimum
+the per-frame intra-block ratio in P/B slices, ideally graduating to
+per-PB residual energy.
+
+**Why P0:** MV alone is blind to several core surveillance scenarios:
+sudden lighting change, new object appearance with no motion match
+(door opens, package dropped), smoke / fire (no clear motion field),
+tampering bursts. An "intra-coded block in a P-slice" is the encoder
+literally giving up on motion prediction for that region — a direct
+signal for those scenarios. CoViAR / DMC-Net validate the academic side
+of MV + residual fusion; the OSS gap is that no production library
+exposes either as a trigger primitive (ffmpeg public API stops at MV).
+
+**Tier ladder (we ship the cheapest tier that passes the recall bar
+for the targeted scenarios; only graduate if the cheaper tier loses):**
+
+| Tier | Signal | Decoder change | Per-frame cost vs MV-only |
+|---|---|---|---|
+| **T1** | CB-level intra-block ratio (already stored in `cb_info.PredMode`) | none | ~0 |
+| T2 | Per-frame CBF density (TU-level coded-block flags) | hook into `decode_TU` | low |
+| T3 | Per-PB residual L1 magnitude | hook into inverse-quant path | mid |
+
+T1 first because it requires zero changes to the decoder hot path.
+
+**Done when (T1, this plan):**
+- `de265_internals.h` exposes `de265_internals_get_CB_stats(image, *out)`
+  returning `{total_cells, intra_cells, inter_cells, skip_cells, *_pixels,
+  slice_type_first}`. **Status: scaffolded 2026-04-29 (commit pending).**
+- Rust FFI binding in `crates/fovea-mv-core` exposes a
+  `Frame::cb_stats()` method.
+- New trigger `IntraRatioTrigger { threshold, slice_types }` that fires
+  when intra-pixel-ratio in P/B slices exceeds the threshold.
+- Python binding in `fovea-mv-py`.
+- Result file `benchmarks/results/<date>-intra-ratio-pilot.md` runs the
+  trigger over the cctv-sample clip + a synthetic "lights off / lights
+  on" clip + a CDnet "fall" clip and shows the trigger fires on the
+  events MV alone misses, with the per-frame cost vs MV-only also
+  reported.
+
+**Effort (T1):** ~1 week including the Rust binding and pilot bench.
+
+**Out of scope (this plan):** H.264 residual extraction. ffmpeg's public
+API does not expose either MVs or residuals at the level we need; the
+H.264 path will require either a libavcodec patch or an alternative
+parser, and is non-trivial. Punt to a follow-up plan once T1's signal
+quality justifies the investment.
+
+### P0.9 — Compressed-domain fusion trigger
+
+**Goal:** A `FusionTrigger` that combines `MotionTrigger` (existing) and
+`IntraRatioTrigger` (P0.8) into a single primitive with documented
+decision semantics.
+
+**Why P0:** P0.8 by itself is one new signal; the headline claim is
+that **MV + intra together** beats MV alone and beats pixel-diff alone
+across the scenario matrix. Without a fusion primitive there is no
+single trigger to point users at.
+
+**Done when:**
+- `FusionTrigger` exposes a 2D-thresholded fire condition (one threshold
+  per signal, plus a combined-OR / combined-AND / weighted-sum mode).
+- Documentation enumerates the four-quadrant semantic table:
+
+  | MV | Intra | Interpretation |
+  |---|---|---|
+  | low | low | idle (suppress) |
+  | low | high | new content / lighting / smoke (fire) |
+  | high | low | clean motion / pan (delegate to global-motion subtractor) |
+  | high | high | sudden event / scene change (fire) |
+
+- Result file extends P0.7 (UCF-Crime recall) and P0.4 (PTZ FP) numbers
+  with `FusionTrigger` rows alongside `MotionTrigger`-only and
+  `pixel-diff`-only baselines.
+
+**Effort:** 3–4 days after P0.8 lands.
+
 ### P0.7 — Recall@event on UCF-Crime
 
 **Goal:** A reproducible recall measurement on a public anomaly dataset.
@@ -224,20 +313,22 @@ sufficient. No external SSD required.
 ## Sequence
 
 ```
-P0.1 pixel-diff baseline      ──┐
-P0.2 mv-extractor head-to-head ─┤
-                                ├─▶ P0.3 multi-stream concurrency
-P0.4 global-motion subtraction ─┤    (uses comparison runners)
-P0.5 spatial cluster            ┤
-                                │
-P0.6 hero example ◀────────────┘ (after P0.4 + P0.5 land)
-
-P0.7 UCF-Crime recall — runs on top of P0.4 + P0.5 trigger composition
+P0.1 pixel-diff baseline       ──┐
+P0.2 mv-extractor head-to-head ──┤
+                                 ├─▶ P0.3 multi-stream concurrency
+P0.4 global-motion subtraction ──┤   (uses comparison runners)
+P0.5 spatial cluster           ──┤
+P0.8 intra-ratio accessor T1   ──┘   (HEVC first; libde265 internals)
+                                 │
+P0.9 fusion trigger ◀───────────┘   (needs P0.4 + P0.5 + P0.8)
+P0.6 hero example   ◀───────────┘   (needs P0.4 + P0.5 + P0.9)
+P0.7 UCF-Crime recall — runs on top of P0.9 fusion trigger
 ```
 
 P0.1 and P0.2 are independent; do them in parallel sessions.
-P0.4 and P0.5 are independent; same.
-P0.6 and P0.7 depend on P0.4 + P0.5 being merged.
+P0.4, P0.5, P0.8 are independent; same.
+P0.9 depends on P0.4 + P0.5 + P0.8.
+P0.6 and P0.7 depend on P0.9.
 
 ## What gets deferred
 

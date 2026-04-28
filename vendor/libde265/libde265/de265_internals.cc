@@ -71,6 +71,61 @@ void de265_image::internals_get_PB_info(de265_PB_info_t *out) const
     }
 }
 
+void de265_image::internals_get_CB_stats(de265_CB_stats_t *out) const
+{
+    out->total_cells   = 0;
+    out->intra_cells   = 0;
+    out->inter_cells   = 0;
+    out->skip_cells    = 0;
+    out->intra_pixels  = 0;
+    out->inter_pixels  = 0;
+    out->skip_pixels   = 0;
+    out->total_pixels  = 0;
+    out->slice_type_first = -1;
+
+    if (!slices.empty() && slices[0] != nullptr) {
+        out->slice_type_first = (int32_t)slices[0]->slice_type;
+    }
+
+    const int n = cb_info.width_in_units * cb_info.height_in_units;
+    for (int i = 0; i < n; ++i) {
+        const CB_ref_info &cb = cb_info[i];
+
+        // log2CbSize == 0 marks an unset / partial cell (see set_log2CbSize
+        // comment) — skip so corrupted streams don't poison the aggregate.
+        if (cb.log2CbSize == 0) continue;
+
+        // Each CB cell covers (1 << log2unitSize) luma pixels per side; a
+        // CU of size (1 << log2CbSize) spans (1 << (log2CbSize - log2unitSize))
+        // such cells per side. We iterate at cell granularity (1 cell per
+        // index) and weight pixel counts by the cell's own footprint, so
+        // the per-cell pixel contribution is just (1 << 2*log2unitSize).
+        const uint64_t cell_pixels =
+            (uint64_t)1 << (2 * cb_info.log2unitSize);
+
+        out->total_cells  += 1;
+        out->total_pixels += cell_pixels;
+
+        switch (cb.PredMode) {
+            case MODE_INTRA:
+                out->intra_cells  += 1;
+                out->intra_pixels += cell_pixels;
+                break;
+            case MODE_INTER:
+                out->inter_cells  += 1;
+                out->inter_pixels += cell_pixels;
+                break;
+            case MODE_SKIP:
+                out->skip_cells   += 1;
+                out->skip_pixels  += cell_pixels;
+                break;
+            default:
+                // Defensive: unknown values get counted in totals only.
+                break;
+        }
+    }
+}
+
 extern "C" {
 
 LIBDE265_API void de265_internals_get_PB_info_layout(
@@ -87,6 +142,13 @@ LIBDE265_API void de265_internals_get_PB_info(
     de265_PB_info *out)
 {
     img->internals_get_PB_info(out);
+}
+
+LIBDE265_API void de265_internals_get_CB_stats(
+    const struct de265_image *img,
+    de265_CB_stats *out)
+{
+    img->internals_get_CB_stats(out);
 }
 
 } // extern "C"

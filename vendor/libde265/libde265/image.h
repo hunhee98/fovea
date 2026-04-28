@@ -497,6 +497,10 @@ public:
   /// the entry shape.
   void internals_get_PB_info(struct de265_PB_info_t *out) const;
 
+  /// Aggregate CB prediction-mode stats across the whole frame.
+  /// See `de265_internals.h` for the entry shape.
+  void internals_get_CB_stats(struct de265_CB_stats_t *out) const;
+
 
   // --- CB metadata access ---
 

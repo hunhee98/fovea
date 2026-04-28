@@ -55,6 +55,47 @@ LIBDE265_API void de265_internals_get_PB_info(
     const struct de265_image *img,
     de265_PB_info *out);
 
+/// Frame-level coding-block prediction-mode statistics.
+///
+/// Aggregates over every coding-block cell in the decoded image. The
+/// "weighted by area" fields count the number of luma-pixel cells
+/// covered by the corresponding mode (`intra_pixels` is the sum, over
+/// every cell whose `PredMode == MODE_INTRA`, of `(1 << 2*log2CbSize)`
+/// — i.e. the number of luma pixels that block represents). This lets
+/// callers compute "intra coverage ratio = intra_pixels / total_pixels"
+/// without needing a per-cell layout.
+///
+/// In a P-slice or B-slice, `intra_pixels / total_pixels` measures the
+/// fraction of the frame for which the encoder gave up motion
+/// prediction and re-coded as intra. This is a low-cost proxy for "new
+/// content" / "scene change" / "lighting change" / "smoke" without
+/// access to the residual coefficients themselves.
+///
+/// `slice_type_first` is the slice_type of the first slice in the
+/// image (0 = B, 1 = P, 2 = I). If the image is a single I-slice every
+/// cell is trivially intra and the ratio is uninformative; callers
+/// should gate on `slice_type_first != 2`.
+typedef struct de265_CB_stats_t {
+    uint32_t total_cells;
+    uint32_t intra_cells;
+    uint32_t inter_cells;
+    uint32_t skip_cells;
+    uint64_t intra_pixels;
+    uint64_t inter_pixels;
+    uint64_t skip_pixels;
+    uint64_t total_pixels;
+    int32_t  slice_type_first;
+} de265_CB_stats;
+
+/// Fill `out` with the frame-level CB prediction-mode aggregate.
+///
+/// O(width_in_units * height_in_units). Reads only the already-decoded
+/// `cb_info` array; does not touch residual coefficients or the pixel
+/// buffer. Safe to call from any thread once the image is fully decoded.
+LIBDE265_API void de265_internals_get_CB_stats(
+    const struct de265_image *img,
+    de265_CB_stats *out);
+
 #ifdef __cplusplus
 }
 #endif
