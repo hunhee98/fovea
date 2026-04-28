@@ -5,7 +5,9 @@
 //! Scope (deliberate):
 //! - Plain data types: [`MotionVector`], [`MvPacket`], [`Event`], [`FrameType`].
 //! - Cheap, allocation-free aggregations: [`motion_energy`], [`intra_ratio`].
-//! - The [`Trigger`] trait. Concrete trigger implementations land in step 4.
+//! - The [`Trigger`] trait and three implementations under [`triggers`]:
+//!   [`triggers::MotionTrigger`], [`triggers::IntervalTrigger`],
+//!   [`triggers::SceneChangeTrigger`].
 //!
 //! Out of scope:
 //! - H.264 bitstream parsing — lives in `fovea-mv-stream` behind `ffmpeg-next`.
@@ -13,6 +15,8 @@
 //! - AI runtime dependencies — never in core.
 
 #![warn(missing_docs)]
+
+pub mod triggers;
 
 use std::fmt;
 
