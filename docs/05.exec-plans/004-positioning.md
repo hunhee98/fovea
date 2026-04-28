@@ -47,8 +47,9 @@ fovea-mv differentiates on four axes simultaneously:
    bursts. fovea-mv pairs MV with a second compressed-domain signal
    (intra-block ratio / residual energy, depending on tier) to cover
    those scenarios at bitstream cost. Prior art for the
-   MV-plus-residual combination as a useful joint feature: CoViAR
-   [arxiv 1712.00636], DMC-Net [arxiv 1901.03460]. The novelty here is
+   MV-plus-residual combination as a useful joint feature:
+   [Wu et al. 2018 — arxiv:1712.00636] (CoViAR),
+   [Shou et al. 2019 — arxiv:1901.03460] (DMC-Net). The novelty here is
    not the fusion idea but exposing it as a production-grade trigger
    primitive in OSS — academic implementations target CNN feature
    extraction, not thresholdable triggers, and Frigate / Viseron /
