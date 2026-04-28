@@ -48,6 +48,12 @@ file + RTSP.
 Hybrid frame sampler. CLIP/DINOv2 embedding diff + token-budget
 selection. New domain. ~1-2 weeks.
 
+Design constraint: trigger-only sampling has a structural recall gap —
+static anomalies (intruder standing still, abandoned object) never
+re-trigger after the initial event. fovea-pick must mix two sources:
+MV-triggered candidates + periodic baseline frames (e.g. 1 frame/N sec
+unconditionally). Periodic slots must be reserved in the token budget.
+
 ## Phase 3 — `fovea-stream`
 
 HF VLM streaming wrapper, KV-cache reuse (StreamingVLM pattern). ~2-3
