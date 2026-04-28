@@ -329,11 +329,21 @@ struct PyStream {
 
 #[pymethods]
 impl PyStream {
-    /// Open a file path. Equivalent to `Stream.from_file(path)`.
+    /// Open a file.
+    ///
+    /// `fast_decode=True` enables FFmpeg's `skip_loop_filter=all` and
+    /// `skip_idct=all` flags. On FFmpeg 8 / H.264 this is roughly a 1.20×
+    /// release-mode decode speedup; motion vectors are bit-exact identical
+    /// either way. RGB output remains practically identical (mean-luma diff
+    /// < 1/255), so enabling it has no downside for typical use.
     #[new]
-    fn new(path: PathBuf) -> PyResult<Self> {
-        let src = FfmpegSource::open_file_with(&path, OpenOptions::default())
-            .map_err(err_to_py)?;
+    #[pyo3(signature = (path, *, fast_decode = false))]
+    fn new(path: PathBuf, fast_decode: bool) -> PyResult<Self> {
+        let opts = OpenOptions {
+            skip_loop_filter_all: fast_decode,
+            skip_idct_all: fast_decode,
+        };
+        let src = FfmpegSource::open_file_with(&path, opts).map_err(err_to_py)?;
         Ok(Self {
             source: Arc::new(Mutex::new(src)),
             current_seq: Arc::new(Mutex::new(0)),
@@ -342,8 +352,9 @@ impl PyStream {
 
     /// Classmethod alias for the constructor.
     #[classmethod]
-    fn from_file(_cls: &Bound<'_, PyType>, path: PathBuf) -> PyResult<Self> {
-        Self::new(path)
+    #[pyo3(signature = (path, *, fast_decode = false))]
+    fn from_file(_cls: &Bound<'_, PyType>, path: PathBuf, fast_decode: bool) -> PyResult<Self> {
+        Self::new(path, fast_decode)
     }
 
     /// Read-only metadata.

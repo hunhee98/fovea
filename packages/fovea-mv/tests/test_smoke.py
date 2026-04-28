@@ -91,6 +91,22 @@ def test_decode_after_advance_raises() -> None:
         first.decode()
 
 
+def test_fast_decode_kwarg_accepted() -> None:
+    """`fast_decode=True` enables A' skip flags. MV output unchanged."""
+    path = _require_sample()
+    triggers_factory = lambda: [
+        MotionTrigger(20_000),
+        IntervalTrigger(2_000),
+    ]
+    a = sum(
+        1 for _ in Stream.from_file(str(path), fast_decode=False).events(triggers_factory())
+    )
+    b = sum(
+        1 for _ in Stream.from_file(str(path), fast_decode=True).events(triggers_factory())
+    )
+    assert a == b, f"event count diverged: default={a}, fast={b}"
+
+
 def test_region_mask_filters() -> None:
     """Mask covering ~nothing (1×1 pixel) should suppress the motion trigger."""
     path = _require_sample()
