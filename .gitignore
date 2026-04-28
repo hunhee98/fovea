@@ -34,6 +34,14 @@ Thumbs.db
 benchmarks/datasets/_downloaded/
 benchmarks/_runs/
 
+# Benchmark media — large source clips are not committed.
+# Each dataset has SOURCE.md (origin + license) and download.sh (fetch script).
+benchmarks/datasets/**/*.mp4
+benchmarks/datasets/**/*.mov
+benchmarks/datasets/**/*.mkv
+benchmarks/datasets/**/*.h264
+benchmarks/datasets/**/*.h265
+
 # Claude
 .claude/settings.local.json
 .claude/launch.json

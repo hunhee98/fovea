@@ -15,3 +15,14 @@ path = "src/lib.rs"
 fovea-mv-core = { path = "../fovea-mv-core", version = "0.0.1" }
 thiserror.workspace = true
 tracing.workspace = true
+ffmpeg-next.workspace = true
+ffmpeg-sys-next.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+criterion.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "ffmpeg_source"
+harness = false
