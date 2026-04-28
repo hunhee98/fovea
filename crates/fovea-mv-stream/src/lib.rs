@@ -73,6 +73,15 @@ pub struct OpenOptions {
     pub skip_idct_all: bool,
 }
 
+/// Network-source configuration.
+///
+/// Stub for exec-plan 002. Step 002.1 introduces the type without fields;
+/// 002.2 adds transport / open_timeout / read_timeout / max_reconnects.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkOptions {
+    // (filled in 002.2)
+}
+
 /// FFmpeg-backed file source.
 ///
 /// Opens an `mp4` (or any libavformat-supported container) file, locates the
@@ -102,10 +111,35 @@ impl FfmpegSource {
 
     /// Open a file with explicit decoder options.
     pub fn open_file_with(path: impl AsRef<Path>, opts: OpenOptions) -> Result<Self> {
+        Self::open_input(path.as_ref(), &NetworkOptions::default(), &opts)
+    }
+
+    /// Open any libavformat-supported URL. Accepts `rtsp://`, `rtsps://`,
+    /// `http(s)://`, `file://`, and bare paths.
+    ///
+    /// `network` is currently a stub; option fields land in step 002.2.
+    pub fn open_url(url: &str, network: NetworkOptions) -> Result<Self> {
+        Self::open_url_with(url, network, OpenOptions::default())
+    }
+
+    /// Open a URL with both network and decoder options.
+    pub fn open_url_with(
+        url: &str,
+        network: NetworkOptions,
+        decoder: OpenOptions,
+    ) -> Result<Self> {
+        Self::open_input(Path::new(url), &network, &decoder)
+    }
+
+    fn open_input(
+        input_ref: &Path,
+        _network: &NetworkOptions,
+        opts: &OpenOptions,
+    ) -> Result<Self> {
         // One-time global init. Idempotent across calls.
         ffmpeg::init()?;
 
-        let input = ffmpeg::format::input(path.as_ref())?;
+        let input = ffmpeg::format::input(input_ref)?;
 
         let stream = input
             .streams()
