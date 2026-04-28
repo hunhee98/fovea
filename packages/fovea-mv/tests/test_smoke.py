@@ -164,6 +164,24 @@ def test_from_url_rejects_negative_timeout() -> None:
         Stream.from_url("file:///tmp/x.mp4", open_timeout_s=-1.0)
 
 
+def test_hevc_mp4_opens_and_emits_events() -> None:
+    """HEVC mp4 input is decoded via the libde265 backend (Step B.4)."""
+    hevc = REPO_ROOT / "benchmarks" / "datasets" / "cctv-sample-hevc" / "sample.mp4"
+    if not hevc.exists():
+        pytest.skip(f"hevc fixture missing at {hevc}")
+    s = Stream.from_file(str(hevc))
+    info = s.info()
+    assert info.width == 1080
+    assert info.height == 1920
+    triggers = [IntervalTrigger(2_000)]
+    n = 0
+    for _ev in s.events(triggers):
+        n += 1
+        if n >= 5:
+            break
+    assert n >= 1, "expected at least one event from HEVC source"
+
+
 def test_region_mask_filters() -> None:
     """Mask covering ~nothing (1×1 pixel) should suppress the motion trigger."""
     path = _require_sample()

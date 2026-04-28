@@ -6,7 +6,7 @@ Evidence-driven infrastructure OSS for video → VLM pipelines.
 
 | Crate / Package | Status | Role |
 |---|---|---|
-| `fovea-mv` | wip | H.264 motion-vector trigger engine. Decides which frames deserve downstream processing. |
+| `fovea-mv` | wip | H.264 / HEVC motion-vector trigger engine. Decides which frames deserve downstream processing. |
 | `fovea-pick` | planned | Hybrid frame sampler (MV + CLIP/DINOv2 + token-budget). |
 | `fovea-stream` | planned | Streaming VLM wrapper over HuggingFace VLMs. |
 
@@ -23,3 +23,7 @@ Pre-alpha. No release yet. See [docs/05.exec-plans/](docs/05.exec-plans/) for ac
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+Vendored libde265 (HEVC decoder) is LGPL-3.0-or-later. See
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for details and the
+LGPL §4 source-shipping requirement.
