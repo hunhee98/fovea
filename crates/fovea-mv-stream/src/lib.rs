@@ -230,16 +230,45 @@ fn mp4_to_annexb_if_needed(input: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Convert a `hvcC` extradata blob (ISO/IEC 14496-15 §8) into a
-/// concatenated Annex-B byte stream. Returns `Err` if the blob is
-/// truncated or the configurationVersion field is not 1.
-fn hvcc_extradata_to_annexb(hvcc: &[u8]) -> std::result::Result<Vec<u8>, &'static str> {
+/// Heuristic: does this byte slice look like an Annex-B HEVC stream
+/// (NAL units prefixed by `00 00 00 01` or `00 00 01`)?
+///
+/// libavformat surfaces HEVC parameter-set extradata in two shapes:
+/// `mp4` / matroska sources hand us a parsed `hvcC` box (ISO/IEC
+/// 14496-15 §8) starting with `configurationVersion = 1`. RTSP
+/// sources — and some live encoders that lift their SDP fmtp config
+/// straight into `extradata` — give us the parameter-set NAL units
+/// already laminated with Annex-B start codes. We have to accept both.
+fn looks_like_annexb(buf: &[u8]) -> bool {
+    if buf.len() < 4 {
+        return false;
+    }
+    buf.starts_with(&[0, 0, 0, 1]) || buf.starts_with(&[0, 0, 1])
+}
+
+/// Convert HEVC parameter-set extradata into a concatenated Annex-B
+/// byte stream. Accepts either an ISO/IEC 14496-15 §8 `hvcC` box (mp4)
+/// or a raw Annex-B blob (RTSP / live capture). Returns `Err` only
+/// when neither shape parses cleanly.
+fn hevc_extradata_to_annexb(extradata: &[u8]) -> std::result::Result<Vec<u8>, &'static str> {
+    if extradata.is_empty() {
+        return Err("HEVC extradata empty");
+    }
+    // RTSP / live capture path: parameter sets already in Annex-B.
+    // libde265 accepts repeated start codes, so we can hand the buffer
+    // straight through.
+    if looks_like_annexb(extradata) {
+        return Ok(extradata.to_vec());
+    }
+
+    // mp4 / matroska path: hvcC box.
+    let hvcc = extradata;
     // Fixed-size hvcC header is 22 bytes; numOfArrays follows at offset 22.
     if hvcc.len() < 23 {
-        return Err("hvcC extradata shorter than 23 bytes");
+        return Err("hvcC extradata shorter than 23 bytes (and not Annex-B)");
     }
     if hvcc[0] != 1 {
-        return Err("hvcC configurationVersion != 1");
+        return Err("hvcC configurationVersion != 1 (and not Annex-B)");
     }
     let num_arrays = hvcc[22] as usize;
     let mut out = Vec::with_capacity(hvcc.len() + num_arrays * 4);
@@ -405,8 +434,8 @@ impl FfmpegSource {
                     }
                 };
                 if !extradata.is_empty() {
-                    let annexb = hvcc_extradata_to_annexb(&extradata).map_err(|msg| {
-                        SourceError::Hevc(format!("hvcC parse failed: {msg}"))
+                    let annexb = hevc_extradata_to_annexb(&extradata).map_err(|msg| {
+                        SourceError::Hevc(format!("HEVC extradata parse failed: {msg}"))
                     })?;
                     dec.push(&annexb).map_err(|e| {
                         SourceError::Hevc(format!("push hvcC parameter sets: {e}"))
