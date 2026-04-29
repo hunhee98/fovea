@@ -232,6 +232,41 @@ impl<'a> DecodedFrame<'a> {
         unsafe { ffi::de265_get_image_PTS(self.raw) }
     }
 
+    /// Per-channel frame size in pixels. Channel 0 is luma (Y); channels
+    /// 1 and 2 are the chroma planes (Cb, Cr) — half-width and
+    /// half-height of luma for 4:2:0 sources.
+    pub fn plane_dimensions(&self, channel: i32) -> (u32, u32) {
+        // SAFETY: raw points to a live de265_image while self exists.
+        unsafe {
+            (
+                ffi::de265_get_image_width(self.raw, channel) as u32,
+                ffi::de265_get_image_height(self.raw, channel) as u32,
+            )
+        }
+    }
+
+    /// Borrow one decoded plane. Returns `(plane_bytes, stride_bytes)`.
+    /// The slice lives for as long as the `DecodedFrame` borrow itself
+    /// and is invalidated by the next `decode_step()` call.
+    pub fn plane(&self, channel: i32) -> (&[u8], usize) {
+        let (w, h) = self.plane_dimensions(channel);
+        let mut stride: i32 = 0;
+        // SAFETY: live de265_image; libde265 returns an internal pointer
+        // valid for the image's lifetime. We bound the slice to `self`
+        // via the returned reference's lifetime, so callers can't outlive
+        // the frame borrow.
+        let p = unsafe {
+            ffi::de265_get_image_plane(self.raw, channel, &mut stride as *mut _)
+        };
+        if p.is_null() || stride <= 0 || w == 0 || h == 0 {
+            return (&[], 0);
+        }
+        let len = (stride as usize) * (h as usize);
+        // SAFETY: pointer non-null; libde265 owns at least `len` bytes.
+        let bytes = unsafe { std::slice::from_raw_parts(p, len) };
+        (bytes, stride as usize)
+    }
+
     /// PB grid size — `(width_in_units, height_in_units, log2_unit_size)`.
     pub fn pb_layout(&self) -> (u32, u32, u32) {
         let mut w: i32 = 0;
