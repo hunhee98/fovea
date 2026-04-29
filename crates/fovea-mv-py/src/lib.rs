@@ -369,6 +369,7 @@ struct PyEvent {
     energy: u64,
     intra_ratio: f32,
     skip_ratio: f32,
+    cbf_density: f32,
     mv_count: u32,
     /// Back-reference to the source so `decode()` can pull RGB. The reference
     /// is valid only until the source advances or is dropped — see the
@@ -423,6 +424,17 @@ impl PyEvent {
         self.skip_ratio
     }
 
+    /// Fraction of macroblocks whose transform unit carried at least
+    /// one non-zero residual coefficient (HEVC only; H.264 leaves
+    /// this at 0.0). Frame-level Coded Block Flag summary —
+    /// orthogonal to `intra_ratio` / `skip_ratio`. Captures "how
+    /// many bits did the encoder spend on residual data" without
+    /// reading the residual coefficients themselves.
+    #[getter]
+    fn cbf_density(&self) -> f32 {
+        self.cbf_density
+    }
+
     #[getter]
     fn mv_count(&self) -> u32 {
         self.mv_count
@@ -460,13 +472,14 @@ impl PyEvent {
 
     fn __repr__(&self) -> String {
         format!(
-            "Event(timestamp_s={:.3}, frame_type='{}', trigger='{}', energy={}, intra_ratio={:.3}, skip_ratio={:.3}, mv_count={})",
+            "Event(timestamp_s={:.3}, frame_type='{}', trigger='{}', energy={}, intra_ratio={:.3}, skip_ratio={:.3}, cbf_density={:.3}, mv_count={})",
             self.timestamp_s(),
             self.frame_type,
             self.trigger_name,
             self.energy,
             self.intra_ratio,
             self.skip_ratio,
+            self.cbf_density,
             self.mv_count,
         )
     }
@@ -695,6 +708,7 @@ impl PyEventIterator {
                     energy: ev.energy,
                     intra_ratio: ev.intra_ratio,
                     skip_ratio: ev.skip_ratio,
+                    cbf_density: ev.cbf_density,
                     mv_count: ev.mv_count,
                     source: self.source.clone(),
                     seq,

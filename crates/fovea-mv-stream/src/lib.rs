@@ -781,6 +781,15 @@ impl FfmpegSource {
         let skip_mb = (stats.skip_pixels / 256) as u32;
         self.out_packet.skip_count = skip_mb.min(self.out_packet.total_mb);
 
+        // Frame-level CBF (Coded Block Flag) density. Maps libde265's
+        // already-populated `tu_info` non-zero-coefficient flag onto
+        // the same 16×16 macroblock grid `total_mb` uses, so trigger
+        // code can compare `cbf_count` against `total_mb` the same way
+        // it compares `intra_count` and `skip_count`.
+        let tu = frame.tu_stats();
+        let cbf_mb = (tu.nonzero_pixels / 256) as u32;
+        self.out_packet.cbf_count = cbf_mb.min(self.out_packet.total_mb);
+
         // Copy the YUV planes out of the libde265 borrow so the next
         // `decode_step()` call (which invalidates the picture pointer)
         // doesn't leave us holding stale references when a downstream

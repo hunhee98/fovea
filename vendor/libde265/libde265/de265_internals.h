@@ -96,6 +96,38 @@ LIBDE265_API void de265_internals_get_CB_stats(
     const struct de265_image *img,
     de265_CB_stats *out);
 
+/// Frame-level transform-unit residual-coverage aggregate.
+///
+/// `nonzero_cells` counts the per-cell `TU_FLAG_NONZERO_COEFF`
+/// already populated by libde265's slice-decode loop. Each cell
+/// covers `(1 << log2unitSize)` luma pixels per side. Use the
+/// `_pixels` fields when the per-cell ratio is what you actually
+/// want — those weight by area so the ratio is comparable across
+/// frames with different TU layouts.
+///
+/// Interpretation: `nonzero_pixels / total_pixels` is the fraction
+/// of the frame whose transform unit carried at least one
+/// non-zero coded residual coefficient — i.e., a Coded Block Flag
+/// (CBF) summary at frame granularity. Orthogonal to the CB
+/// PredMode signal: an inter CU can be predicted well (cbf_luma
+/// = 0) or have residual coding bits (cbf_luma = 1), and a skip
+/// CU has CBF = 0 by construction.
+typedef struct de265_TU_stats_t {
+    uint32_t total_cells;
+    uint32_t nonzero_cells;
+    uint64_t total_pixels;
+    uint64_t nonzero_pixels;
+} de265_TU_stats;
+
+/// Fill `out` with the frame-level TU non-zero-coefficient aggregate.
+///
+/// O(width_in_units * height_in_units). Reads only the already-
+/// decoded `tu_info` array. Same threading rules as the CB-stats
+/// accessor.
+LIBDE265_API void de265_internals_get_TU_stats(
+    const struct de265_image *img,
+    de265_TU_stats *out);
+
 #ifdef __cplusplus
 }
 #endif

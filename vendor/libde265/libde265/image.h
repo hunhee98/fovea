@@ -501,6 +501,10 @@ public:
   /// See `de265_internals.h` for the entry shape.
   void internals_get_CB_stats(struct de265_CB_stats_t *out) const;
 
+  /// Aggregate TU non-zero-coefficient stats across the whole frame.
+  /// See `de265_internals.h` for the entry shape.
+  void internals_get_TU_stats(struct de265_TU_stats_t *out) const;
+
 
   // --- CB metadata access ---
 

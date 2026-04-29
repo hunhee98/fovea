@@ -122,6 +122,11 @@ pub struct MvPacket {
     /// encoder's explicit "this region didn't change" signal, useful
     /// as an idle confidence boost for triggers.
     pub skip_count: u32,
+    /// Macroblocks whose transform unit carried at least one non-zero
+    /// coded residual coefficient. HEVC only; H.264 leaves this at 0.
+    /// `cbf_count / total_mb` is a frame-level Coded Block Flag
+    /// summary — orthogonal to `intra_count` / `skip_count`.
+    pub cbf_count: u32,
     /// All extracted motion vectors. Empty for I-frames.
     pub mvs: Vec<MotionVector>,
 }
@@ -135,6 +140,7 @@ impl MvPacket {
             total_mb: 0,
             intra_count: 0,
             skip_count: 0,
+            cbf_count: 0,
             mvs: Vec::new(),
         }
     }
@@ -146,6 +152,7 @@ impl MvPacket {
         self.total_mb = 0;
         self.intra_count = 0;
         self.skip_count = 0;
+        self.cbf_count = 0;
         self.mvs.clear();
     }
 }
@@ -170,6 +177,10 @@ pub struct Event {
     /// Fraction of macroblocks coded as MODE_SKIP in the firing packet
     /// (0.0..=1.0). Populated for HEVC; always 0.0 for H.264 today.
     pub skip_ratio: f32,
+    /// Fraction of macroblocks whose TU carried non-zero residual
+    /// coefficients (0.0..=1.0). Populated for HEVC; always 0.0 for
+    /// H.264 today.
+    pub cbf_density: f32,
     /// Motion vector count in the firing packet.
     pub mv_count: u32,
 }
@@ -214,6 +225,18 @@ pub fn skip_ratio(packet: &MvPacket) -> f32 {
         0.0
     } else {
         packet.skip_count as f32 / packet.total_mb as f32
+    }
+}
+
+/// Ratio of macroblocks with non-zero coded residual coefficients.
+/// 0.0 when `total_mb == 0` or when the source pipeline does not
+/// populate `cbf_count` (H.264 today).
+#[inline]
+pub fn cbf_density(packet: &MvPacket) -> f32 {
+    if packet.total_mb == 0 {
+        0.0
+    } else {
+        packet.cbf_count as f32 / packet.total_mb as f32
     }
 }
 
@@ -269,6 +292,7 @@ mod tests {
             total_mb: 100,
             intra_count: 25,
             skip_count: 0,
+            cbf_count: 0,
             mvs: vec![],
         };
         assert!((intra_ratio(&packet) - 0.25).abs() < 1e-6);
@@ -282,6 +306,7 @@ mod tests {
             total_mb: 100,
             intra_count: 0,
             skip_count: 80,
+            cbf_count: 0,
             mvs: vec![],
         };
         assert!((skip_ratio(&packet) - 0.80).abs() < 1e-6);
@@ -301,6 +326,7 @@ mod tests {
             total_mb: 100,
             intra_count: 5,
             skip_count: 60,
+            cbf_count: 30,
             mvs: vec![mv(1, 2, 4); 50],
         };
         let cap = p.mvs.capacity();

@@ -76,6 +76,37 @@ pub struct CbStats {
     pub slice_type_first: i32,
 }
 
+/// Frame-level transform-unit residual-coverage aggregate, mirroring
+/// `de265_TU_stats`. Reads the per-cell `TU_FLAG_NONZERO_COEFF` flag
+/// already populated by libde265 during slice decode.
+///
+/// `nonzero_pixels / total_pixels` is a frame-level Coded Block Flag
+/// summary — the share of the frame whose transform unit carried at
+/// least one non-zero coded residual coefficient. Orthogonal to
+/// `CbStats`: an inter CU that predicts well leaves CBF = 0 even
+/// though it isn't a SKIP; an intra CU with simple texture can also
+/// leave many TUs at CBF = 0. Captures "how much encoding bits the
+/// encoder actually had to spend on residual" at frame granularity,
+/// without touching the residual coefficients themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TuStats {
+    pub total_cells: u32,
+    pub nonzero_cells: u32,
+    pub total_pixels: u64,
+    pub nonzero_pixels: u64,
+}
+
+impl TuStats {
+    /// `nonzero_pixels / total_pixels`, 0.0 when the frame is empty.
+    pub fn cbf_density(&self) -> f32 {
+        if self.total_pixels == 0 {
+            0.0
+        } else {
+            self.nonzero_pixels as f32 / self.total_pixels as f32
+        }
+    }
+}
+
 impl CbStats {
     /// `intra_pixels / total_pixels`, 0.0 when the frame is empty.
     pub fn intra_ratio(&self) -> f32 {
@@ -281,6 +312,20 @@ impl<'a> DecodedFrame<'a> {
             );
         }
         (w as u32, h as u32, log2u as u32)
+    }
+
+    /// Frame-level TU non-zero-coefficient aggregate. One C call.
+    pub fn tu_stats(&self) -> TuStats {
+        let mut raw: ffi::de265_TU_stats = unsafe { std::mem::zeroed() };
+        unsafe {
+            ffi::de265_internals_get_TU_stats(self.raw, &mut raw as *mut _);
+        }
+        TuStats {
+            total_cells: raw.total_cells,
+            nonzero_cells: raw.nonzero_cells,
+            total_pixels: raw.total_pixels,
+            nonzero_pixels: raw.nonzero_pixels,
+        }
     }
 
     /// Frame-level CB prediction-mode aggregate. One C call, no

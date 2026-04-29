@@ -12,7 +12,7 @@
 //! which they are evaluated determines which `Event` wins for a given packet.
 
 use crate::global_motion::{to_q4, GlobalMotionEstimate, GlobalMotionEstimator};
-use crate::{intra_ratio, motion_energy, skip_ratio, Event, FrameType, MotionVector, MvPacket, Trigger};
+use crate::{cbf_density, intra_ratio, motion_energy, skip_ratio, Event, FrameType, MotionVector, MvPacket, Trigger};
 
 /// Sliding window that smooths energy over the last `cap` packets.
 ///
@@ -235,6 +235,7 @@ impl Trigger for MotionTrigger {
                     energy,
                     intra_ratio: intra_ratio(packet),
                     skip_ratio: skip_ratio(packet),
+                    cbf_density: cbf_density(packet),
                     mv_count: packet.mvs.len() as u32,
                 });
             }
@@ -288,6 +289,7 @@ impl Trigger for IntervalTrigger {
                 energy: motion_energy(&packet.mvs),
                 intra_ratio: intra_ratio(packet),
                 skip_ratio: skip_ratio(packet),
+                    cbf_density: cbf_density(packet),
                 mv_count: packet.mvs.len() as u32,
             });
         }
@@ -346,6 +348,7 @@ impl Trigger for SceneChangeTrigger {
                 energy: motion_energy(&packet.mvs),
                 intra_ratio: r,
                 skip_ratio: skip_ratio(packet),
+                    cbf_density: cbf_density(packet),
                 mv_count: packet.mvs.len() as u32,
             });
         }
@@ -502,6 +505,7 @@ impl Trigger for FusionTrigger {
             energy,
             intra_ratio: intra_r,
             skip_ratio: skip_r,
+            cbf_density: cbf_density(packet),
             mv_count: packet.mvs.len() as u32,
         })
     }
@@ -630,6 +634,7 @@ impl Trigger for SpatialClusterTrigger {
             energy: total_energy,
             intra_ratio: intra_ratio(packet),
             skip_ratio: skip_ratio(packet),
+                    cbf_density: cbf_density(packet),
             mv_count: packet.mvs.len() as u32,
         })
     }
@@ -666,6 +671,7 @@ mod tests {
             total_mb: total,
             intra_count: intra,
             skip_count: 0,
+            cbf_count: 0,
             mvs,
         }
     }
@@ -677,6 +683,7 @@ mod tests {
             total_mb: total,
             intra_count: total,
             skip_count: 0,
+            cbf_count: 0,
             mvs: vec![],
         }
     }
@@ -729,6 +736,7 @@ mod tests {
             total_mb: 100,
             intra_count: 0,
             skip_count: 0,
+            cbf_count: 0,
             mvs: vec![mv(150, 0, 0, 0)], // energy = 150/4 = 37 < 100
         };
         assert!(trig.evaluate(&small).is_none());
@@ -743,6 +751,7 @@ mod tests {
             total_mb: 100,
             intra_count: 0,
             skip_count: 0,
+            cbf_count: 0,
             mvs: big_mvs,
         };
         // energy = 30 * 10 = 300 >= 100 ✓
@@ -761,6 +770,7 @@ mod tests {
             total_mb: 0,
             intra_count: 0,
             skip_count: 0,
+            cbf_count: 0,
             mvs: vec![mv(40, 40, 0, 0)],
         };
         assert!(trig.evaluate(&p).is_none());

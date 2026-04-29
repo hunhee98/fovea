@@ -126,6 +126,31 @@ void de265_image::internals_get_CB_stats(de265_CB_stats_t *out) const
     }
 }
 
+void de265_image::internals_get_TU_stats(de265_TU_stats_t *out) const
+{
+    out->total_cells   = 0;
+    out->nonzero_cells = 0;
+    out->total_pixels  = 0;
+    out->nonzero_pixels = 0;
+
+    const uint64_t cell_pixels =
+        (uint64_t)1 << (2 * tu_info.log2unitSize);
+    const int n = tu_info.width_in_units * tu_info.height_in_units;
+    for (int i = 0; i < n; ++i) {
+        out->total_cells  += 1;
+        out->total_pixels += cell_pixels;
+        // libde265 sets TU_FLAG_NONZERO_COEFF in tu_info[idx] from
+        // `set_nonzero_coefficient` during slice decode whenever a
+        // transform unit carries at least one non-zero residual
+        // coefficient (i.e. cbf_luma == 1, or chroma equivalents
+        // contributed to a nonzero coded block).
+        if (tu_info[i] & TU_FLAG_NONZERO_COEFF) {
+            out->nonzero_cells  += 1;
+            out->nonzero_pixels += cell_pixels;
+        }
+    }
+}
+
 extern "C" {
 
 LIBDE265_API void de265_internals_get_PB_info_layout(
@@ -149,6 +174,13 @@ LIBDE265_API void de265_internals_get_CB_stats(
     de265_CB_stats *out)
 {
     img->internals_get_CB_stats(out);
+}
+
+LIBDE265_API void de265_internals_get_TU_stats(
+    const struct de265_image *img,
+    de265_TU_stats *out)
+{
+    img->internals_get_TU_stats(out);
 }
 
 } // extern "C"
