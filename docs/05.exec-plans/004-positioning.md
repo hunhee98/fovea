@@ -96,20 +96,52 @@ runner (`benchmarks/runners/density.py`) and the same accuracy bench.
 
 **Effort:** 2–3 days.
 
-### P0.2 — mv-extractor head-to-head
+### P0.2 — Compressed-domain library capability matrix (was: mv-extractor head-to-head)
 
-**Goal:** A throughput comparison against `mv-extractor` (the closest
-existing library) on identical input.
+**Re-scoped 2026-04-29.** The original "throughput vs mv-extractor"
+framing was wrong. Both projects call the same `libavcodec` API
+(`+export_mvs`) under the hood, so single-stream raw-MV-extraction
+throughput is approximately equal — there is no honest "N× faster"
+claim to make at the H.264 level. fovea-mv's actual advantage over
+mv-extractor is in **what each library exposes**, not how fast each
+one does the same thing.
 
-**Why P0:** Defines the "vs mv-extractor" headline ratio.
+**Goal (revised):** A side-by-side capability table covering the
+features production NVR/VMS users actually care about, plus a
+small-scale latency/throughput sanity check at N=1 to confirm the
+"approximately equal" claim isn't off by a surprising factor.
+
+**Why P0:** Without it, the README ends up making an unsupported
+"vs mv-extractor" speed claim. With the capability table, the
+comparison stays defensible — fovea-mv covers HEVC, MODE_SKIP
+ratio, CB-stats, glue-free RTSP, and ships trigger primitives;
+mv-extractor returns raw MVs from H.264 only.
 
 **Done when:**
-- `benchmarks/baselines/mv-extractor/` wraps `pip install mv-extractor`
-  in the same runner shape.
-- Result file shows N=1, 2, 4, 8 throughput on identical hardware and
-  clip, with mv-extractor's GIL-bound single-stream cost called out.
+- `docs/01.architecture/comparison-matrix.md` (or a section in
+  `OVERVIEW.md`) lists fovea-mv vs mv-extractor vs ffmpeg
+  `+export_mvs` direct vs Frigate's pixel-diff motion module across
+  these axes:
+  - codecs supported (H.264 / HEVC / AV1 / VP9 explicit-error)
+  - signals exposed (MV / intra ratio / skip ratio / global-motion
+    correction / spatial cluster)
+  - RTSP / live-source handling
+  - trigger primitives ship out of the box
+  - GIL / concurrency model
+  - license
+- A small `benchmarks/baselines/mv_extractor/` runner that wraps
+  the canonical pip package on a Linux box (the package has no
+  Apple Silicon wheels and the official Docker image is amd64-only,
+  so this runs in cloud-bench tier — see Hardware approach).
+- Result file `benchmarks/results/<date>-mv-extractor-N1-sanity.md`
+  reports per-realtime-stream cost at N=1 on identical input,
+  documenting that the wedge is *capability*, not raw-MV speed.
 
-**Effort:** 1–2 days.
+**Effort:** ~half a day for the capability table; ~1 hour cloud
+bench when we rent a box for P0.7 anyway.
+
+**Status:** capability table can land any time on MBA; the cloud
+sanity run is bundled with the next cloud-tier session.
 
 ### P0.3 — Multi-stream concurrency (Tokio)
 
