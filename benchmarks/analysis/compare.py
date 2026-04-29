@@ -215,7 +215,7 @@ def main() -> int:
     headers = ["strategy", "calls", "vs oracle", "cost USD", "coverage", "precision", "mean lat ms"]
     rows = []
     oracle_n = len(oracle_calls)
-    for name in ["oracle_1fps", "uniform_1fps", "uniform_0.2fps", "fovea_mv"]:
+    for name in ["oracle_1fps", "uniform_1fps", "uniform_0.2fps", "fovea_trigger"]:
         if name not in strategies:
             continue
         calls, wall = strategies[name]

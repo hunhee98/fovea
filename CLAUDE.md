@@ -15,7 +15,7 @@ Fovea is a monorepo. Subprojects ship as independent crates/packages but share i
 
 | Subproject | Status | Role |
 |------------|--------|------|
-| `fovea-mv` (Phase 1) | active | H.264 motion-vector trigger engine. Decides which frames deserve downstream processing. Rust core + PyO3. |
+| `fovea-trigger` (Phase 1) | active | H.264 motion-vector trigger engine. Decides which frames deserve downstream processing. Rust core + PyO3. |
 | `fovea-pick` (Phase 2) | planned | Hybrid frame sampler. MV trigger + CLIP/DINOv2 diff + token-budget selection. |
 | `fovea-stream` (Phase 3) | planned | Streaming VLM wrapper. Two-process split (Flash-VStream pattern) + KV cache reuse (StreamingVLM pattern) over HF VLMs. |
 
@@ -31,7 +31,7 @@ Fovea is a monorepo. Subprojects ship as independent crates/packages but share i
 - **Every performance claim must point to a benchmark file in `benchmarks/results/`.** No "fast", "efficient", "low-latency" without a number tied to a reproducible run.
 - **Every non-obvious technical decision must cite a paper or established prior art.** Inline citation: `[CoViAR — arxiv 1712.00636]`. Paper PDFs/notes go in `docs/02.papers/`.
 - **Benchmarks before features.** When adding a feature whose value is performance, the benchmark proving the claim must land in the same PR.
-- **No regression-blind merges.** Performance-critical files (`crates/fovea-mv-core/`, `crates/fovea-mv-stream/`) require a perf check on PR. If numbers regress >5% on the canonical benchmark, the PR must justify or fix.
+- **No regression-blind merges.** Performance-critical files (`crates/fovea-trigger-core/`, `crates/fovea-trigger-stream/`) require a perf check on PR. If numbers regress >5% on the canonical benchmark, the PR must justify or fix.
 
 ### Reproducibility rules
 
@@ -46,7 +46,7 @@ Fovea is a monorepo. Subprojects ship as independent crates/packages but share i
 - **Rust: `#![warn(missing_docs)]` on all public crates.** Public API has rustdoc.
 - **Python: type-checked.** `mypy --strict` clean on `packages/`.
 - **No silent allocations in hot path.** Per-packet code path (MV aggregation) must not allocate. Bench-enforced.
-- **No third-party AI runtime in core crates.** `fovea-mv-core` does not depend on torch/onnx/candle. Its job is parsing and arithmetic, period.
+- **No third-party AI runtime in core crates.** `fovea-trigger-core` does not depend on torch/onnx/candle. Its job is parsing and arithmetic, period.
 
 ### Citation rules
 
@@ -67,18 +67,18 @@ fovea/
 ├── pyproject.toml             # Python workspace
 │
 ├── crates/                    # Rust core
-│   ├── fovea-mv-core/         # H.264 NAL + MV parsing, triggers
-│   ├── fovea-mv-stream/       # Source adapters (file, RTSP, ...)
-│   └── fovea-mv-py/           # PyO3 bindings
+│   ├── fovea-trigger-core/         # H.264 NAL + MV parsing, triggers
+│   ├── fovea-trigger-stream/       # Source adapters (file, RTSP, ...)
+│   └── fovea-trigger-py/           # PyO3 bindings
 │
 ├── packages/                  # Python distributions
-│   └── fovea-mv/              # Python wrapper around fovea-mv-py
+│   └── fovea-trigger/              # Python wrapper around fovea-trigger-py
 │
 ├── benchmarks/                # First-class — see Critical Rules
 │   ├── README.md              # How to reproduce
 │   ├── datasets/              # download.sh scripts (no media committed)
 │   ├── baselines/             # uniform-sampling, mv-extractor, etc.
-│   ├── runners/               # fovea-mv runs
+│   ├── runners/               # fovea-trigger runs
 │   ├── analysis/              # comparison + plotting
 │   └── results/               # dated, committed
 │
@@ -103,10 +103,10 @@ fovea/
 
 ## Versioning & Release
 
-- **Semantic versioning per subproject.** `fovea-mv-0.1.0`, `fovea-stream-0.2.1`, etc. No monorepo-wide version.
+- **Semantic versioning per subproject.** `fovea-trigger-0.1.0`, `fovea-stream-0.2.1`, etc. No monorepo-wide version.
 - **0.x means API may change.** 1.0 means we promise stability.
 - **Release artifacts:** Rust crates → crates.io, Python packages → PyPI. Both via tagged release.
-- **Tag format:** `<subproject>-v<version>` (e.g. `fovea-mv-v0.1.0`).
+- **Tag format:** `<subproject>-v<version>` (e.g. `fovea-trigger-v0.1.0`).
 - **Every release must update `CHANGELOG.md`** with: features, fixes, perf deltas (with bench result links), breaking changes.
 
 ## Git

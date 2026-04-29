@@ -1,8 +1,8 @@
-# 001 — fovea-mv MVP
+# 001 — fovea-trigger MVP
 
 Status: parked — 0.1.0 prototype, see 003 for roadmap
 Owner: @hunhee98
-Subproject: `fovea-mv`
+Subproject: `fovea-trigger`
 
 ## Outcome
 
@@ -12,7 +12,7 @@ Working prototype of a compressed-domain MV trigger engine. Public branch:
 
 ### Done
 
-- H.264 MV extraction via FFmpeg `+export_mvs` (`fovea-mv-stream`).
+- H.264 MV extraction via FFmpeg `+export_mvs` (`fovea-trigger-stream`).
 - HEVC MV extraction via vendored libde265 + `de265_internals` accessor we added on top.
 - Per-MB threshold mode on `MotionTrigger` (resolution-independent).
 - `MotionTrigger`, `IntervalTrigger`, `SceneChangeTrigger`, `RegionMask`.

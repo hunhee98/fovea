@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # PostToolUse Edit/Write — hot-path alloc patterns + density-bench reminder.
-# Trigger only on crates/fovea-mv-core/ .rs files.
+# Trigger only on crates/fovea-trigger-core/ .rs files.
 set -u
 input=$(cat)
 path=$(printf '%s' "$input" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('file_path',''))" 2>/dev/null || echo "")
 
 case "$path" in
-  */crates/fovea-mv-core/*.rs) ;;
+  */crates/fovea-trigger-core/*.rs) ;;
   *) exit 0 ;;
 esac
 

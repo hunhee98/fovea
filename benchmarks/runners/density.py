@@ -1,9 +1,9 @@
 """Density benchmark — sustained CPU% / RSS / trigger latency at N concurrent streams.
 
-Measures the structural claim: "fovea-mv does not decode in the idle path,
+Measures the structural claim: "fovea-trigger does not decode in the idle path,
 so per-stream cost stays roughly flat as N grows."
 
-Each stream is a separate process running fovea-mv with a high motion
+Each stream is a separate process running fovea-trigger with a high motion
 threshold and a long interval (so the trigger rarely fires; we are
 measuring the cheap parse path). psutil samples each worker at 100ms
 and aggregates over the run window.
@@ -35,7 +35,7 @@ from pathlib import Path
 
 import psutil
 
-from fovea_mv import IntervalTrigger, MotionTrigger, Stream
+from fovea_trigger import IntervalTrigger, MotionTrigger, Stream
 
 from .env import RUNS_DIR, macmon_sample, macmon_summary
 
@@ -185,7 +185,7 @@ def _aggregate(samples: list[WorkerSamples], n: int) -> StageResult:
     # Realtime-equivalent CPU = observed_cpu / throughput_x. If the worker
     # processed 6× realtime at 95% CPU, then at 1× realtime it would use
     # ~16% CPU (assuming the parse path is the dominant cost, which is the
-    # whole point of fovea-mv).
+    # whole point of fovea-trigger).
     cpu_realtime = (cpu_mean / throughput_x) if throughput_x > 0 else 0.0
 
     return StageResult(

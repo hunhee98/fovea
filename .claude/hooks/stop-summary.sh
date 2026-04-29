@@ -23,7 +23,7 @@ done
 
 # Hot-path edits without bench result update.
 hotpath_changed=$(git diff --cached --name-only 2>/dev/null; git diff --name-only 2>/dev/null)
-if printf '%s' "$hotpath_changed" | grep -q 'crates/fovea-mv-core/'; then
+if printf '%s' "$hotpath_changed" | grep -q 'crates/fovea-trigger-core/'; then
   bench_changed=$(printf '%s' "$hotpath_changed" | grep 'benchmarks/results/' || true)
   if [ -z "$bench_changed" ]; then
     printf '%s\n' "[fovea hook] mv-core changed but no benchmarks/results/ update — run 'make density-bench'."

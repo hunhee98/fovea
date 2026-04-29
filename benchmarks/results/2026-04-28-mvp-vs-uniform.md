@@ -1,4 +1,4 @@
-# 2026-04-28 — fovea-mv vs uniform sampling
+# 2026-04-28 — fovea-trigger vs uniform sampling
 
 Status: **partial — second clip (`youtube-cctv-2`) gets us closer but the
 exec-plan acceptance bars (≤ 15 % calls, ≥ 95 % recall) are still not
@@ -21,7 +21,7 @@ period, so every Oracle window is event-positive and "coverage"
 collapses to "spread evenly across time". This is the worst case for a
 motion-energy trigger.
 
-Best fovea_mv configuration: `motion_threshold=200_000`,
+Best fovea_trigger configuration: `motion_threshold=200_000`,
 `interval_max_gap_ms=10_000`, `scene_change_threshold=0.6`.
 
 | strategy        | calls | vs oracle | cost USD  | coverage | precision |
@@ -29,7 +29,7 @@ Best fovea_mv configuration: `motion_threshold=200_000`,
 | oracle_1fps     |    16 |     100 % | $0.00163  |    100 % |     100 % |
 | uniform_1fps    |    16 |     100 % | $0.00163  |    100 % |     100 % |
 | uniform_0.2fps  |     4 |      25 % | $0.00041  |     62 % |     100 % |
-| **fovea_mv**    |   **3** |   **19 %** | **$0.00031** |   44 %  |   100 % |
+| **fovea_trigger**    |   **3** |   **19 %** | **$0.00031** |   44 %  |   100 % |
 
 ### Clip B — `youtube-cctv-2/sample.mp4`
 
@@ -41,7 +41,7 @@ distinct active period bounded by static periods — but at low
 resolution motion-energy peaks are small (max 3910), so the threshold
 must be tuned per clip.
 
-Best fovea_mv configuration: `motion_threshold=3800`,
+Best fovea_trigger configuration: `motion_threshold=3800`,
 `interval_max_gap_ms=30_000`, `scene_change_threshold=2.0` (effectively
 disabled — the clip has no scene cuts).
 
@@ -53,7 +53,7 @@ Hand-labeled event ground truth: `events.csv` defines the interval
 | oracle_1fps     |    56 |     100 % | $0.00567  |    100 % |      46 % |
 | uniform_1fps    |    56 |     100 % | $0.00567  |    100 % |      46 % |
 | uniform_0.2fps  |    12 |      21 % | $0.00121  |     62 % |      42 % |
-| **fovea_mv**    |  **12** |   **21 %** | **$0.00121** |   46 %  |   **75 %** |
+| **fovea_trigger**    |  **12** |   **21 %** | **$0.00121** |   46 %  |   **75 %** |
 
 For the same call budget as `uniform_0.2fps`, the trigger lands a
 **larger fraction of its calls inside the actual event** (75 % vs
@@ -72,11 +72,11 @@ event window rather than spreading evenly through it.
 
 For a **VLM cost-reduction trigger**, precision is the load-bearing
 metric: every call outside the event is a wasted dollar. By that lens
-`fovea_mv` outperforms `uniform_0.2fps` by 1.8× on Clip B while issuing
+`fovea_trigger` outperforms `uniform_0.2fps` by 1.8× on Clip B while issuing
 the same number of calls.
 
 For a **safety-critical alerting** use case, recall matters more.
-There, the right move is a denser fovea-mv configuration (lower
+There, the right move is a denser fovea-trigger configuration (lower
 threshold, shorter heartbeat) until the recall floor is met.
 
 ## Why neither clip hit ≤ 15 % calls AND ≥ 95 % recall
@@ -140,7 +140,7 @@ free after the first pass.
 - **oracle_1fps** — `IntervalTrigger(1000)`. Sets the ground truth.
 - **uniform_1fps** — same cadence; verifies cache reuse.
 - **uniform_0.2fps** — `IntervalTrigger(5000)`.
-- **fovea_mv** — `MotionTrigger + IntervalTrigger heartbeat + SceneChangeTrigger`,
+- **fovea_trigger** — `MotionTrigger + IntervalTrigger heartbeat + SceneChangeTrigger`,
   configuration per clip above.
 
 ### VLM
@@ -168,7 +168,7 @@ $0.075/1M, output $0.30/1M.
 ## Findings
 
 1. **Trigger correctness validated.** Across both clips and many
-   configurations, every fovea_mv call landed on a frame the Oracle
+   configurations, every fovea_trigger call landed on a frame the Oracle
    also visited and described — there are no false-positive trigger
    fires beyond the inherent uncertainty of the Oracle ground truth.
 2. **Precision win on bounded events.** On Clip B the trigger
@@ -219,7 +219,7 @@ To produce the canonical exec-plan 001 acceptance numbers we need:
 2. **Clip-A `events.csv`** to put it on the same footing as Clip B.
 3. **Onset/offset trigger prototype** if the bursty-cluster
    recall gap persists on the new clip.
-4. **`motion_energy_per_mb`** normalization in fovea-mv-core so
+4. **`motion_energy_per_mb`** normalization in fovea-trigger-core so
    thresholds are resolution-independent.
 
 ## Files

@@ -19,7 +19,7 @@ Precision is meaningful only relative to baselines. Standard fovea bench reports
 - `oracle_1fps` — sets the ground truth. Precision is the same as the Oracle's own positive rate (i.e. fraction of Oracle frames that landed inside labeled events).
 - `uniform_1fps` — same cadence as Oracle. Verifies cache reuse and per-call cost.
 - `uniform_0.2fps` — sparser uniform sampling. The "naive cheap" baseline.
-- `fovea_mv` — the trigger under test.
+- `fovea_trigger` — the trigger under test.
 
 A useful trigger improves precision over `uniform_<same call count>fps`.
 

@@ -1,17 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/fovea-mv-core",
-    "crates/fovea-mv-stream",
-    "crates/fovea-mv-py",
+    "crates/fovea-trigger-core",
+    "crates/fovea-trigger-stream",
+    "crates/fovea-trigger-py",
 ]
-# fovea-mv-py is a cdylib that links via maturin's Python integration.
+# fovea-trigger-py is a cdylib that links via maturin's Python integration.
 # Plain `cargo build --workspace` cannot link it on macOS/Linux without
 # maturin scaffolding, so exclude it from default workspace operations.
 # Build it explicitly via `maturin develop` in step 4.
 default-members = [
-    "crates/fovea-mv-core",
-    "crates/fovea-mv-stream",
+    "crates/fovea-trigger-core",
+    "crates/fovea-trigger-stream",
 ]
 
 [workspace.package]

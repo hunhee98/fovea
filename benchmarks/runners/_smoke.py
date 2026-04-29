@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import sys
 
-from fovea_mv import IntervalTrigger, Stream
+from fovea_trigger import IntervalTrigger, Stream
 
 from .vlm import VlmClient
 

@@ -1,6 +1,6 @@
 """Pixel-diff baseline density runner.
 
-Mirror image of `benchmarks/runners/density.py` but with the fovea-mv
+Mirror image of `benchmarks/runners/density.py` but with the fovea-trigger
 trigger pipeline replaced by a classical pixel-diff motion detector
 operating on fully-decoded frames. Same hardware capture, same CPU /
 RSS / throughput / latency instrumentation, same multiprocessing
@@ -15,7 +15,7 @@ What "pixel-diff" means here:
 
 This is the textbook OSS first-stage motion detector — Frigate's
 `motion-mask + frame_diff` path, Shinobi's `pam`, Viseron's
-`background_subtractor`. We implement it once here so fovea-mv's
+`background_subtractor`. We implement it once here so fovea-trigger's
 "compressed-domain, no-decode-in-idle-path" claim has something to
 beat (or be beaten by) on identical hardware.
 

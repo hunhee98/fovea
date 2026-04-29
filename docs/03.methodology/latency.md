@@ -2,9 +2,9 @@
 
 ## Per-packet latency
 
-Time spent inside `fovea-mv-core` parsing one H.264 / HEVC packet and updating trigger state.
+Time spent inside `fovea-trigger-core` parsing one H.264 / HEVC packet and updating trigger state.
 
-- **Tool:** `criterion` microbench in `crates/fovea-mv-core/benches/`.
+- **Tool:** `criterion` microbench in `crates/fovea-trigger-core/benches/`.
 - **Reported:** p50, p95, p99 in microseconds. Mean alone is meaningless for tail-sensitive code.
 - **Warmup:** ≥ 100 iterations before measurement; cold start excluded.
 - **Excluded:** decode, MV→RGB conversion, network read.

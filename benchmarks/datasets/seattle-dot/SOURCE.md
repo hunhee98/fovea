@@ -15,7 +15,7 @@ This dataset is **not committed**. `download.sh` fetches it on demand.
 
 ## Why this dataset matters
 
-fovea-mv reads patterns the encoder leaves in the H.264 bitstream — motion
+fovea-trigger reads patterns the encoder leaves in the H.264 bitstream — motion
 vectors, intra-coded blocks, slice structure. Those patterns are encoder-
 specific. To make claims like "this works on real CCTV", we need bitstreams
 produced by real CCTV encoders, not by `ffmpeg -i in.png -c:v libx264` with
@@ -74,7 +74,7 @@ rm -rf benchmarks/datasets/seattle-dot/data/
 
 ## What's been validated against this source so far
 
-- 2026-04-29 — fovea-mv on a 30-second 1080p capture: 17.2× realtime parse
+- 2026-04-29 — fovea-trigger on a 30-second 1080p capture: 17.2× realtime parse
   on M3 8-core, P-frame `intra_ratio` distribution mean 0.079 with max
   0.180 (i.e. the new CB-stats accessor returns meaningful, non-degenerate
   values on real traffic CCTV). Captured ad-hoc during the 004 wedge-proof

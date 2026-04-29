@@ -30,7 +30,7 @@ B B B P B B B P …).
 ## Command
 
 ```sh
-cargo run -q -p fovea-mv-stream --example cb_stats_compare \
+cargo run -q -p fovea-trigger-stream --example cb_stats_compare \
   -- benchmarks/datasets/cctv-sample-hevc/sample.h265
 ```
 
@@ -82,9 +82,9 @@ for trigger behavior.
 
 ## Files
 
-- `crates/fovea-mv-stream/src/hevc.rs` — `CbStats` struct,
+- `crates/fovea-trigger-stream/src/hevc.rs` — `CbStats` struct,
   `DecodedFrame::cb_stats()`.
-- `crates/fovea-mv-stream/examples/cb_stats_compare.rs` — the runner
+- `crates/fovea-trigger-stream/examples/cb_stats_compare.rs` — the runner
   used to produce these numbers.
 - `vendor/libde265/libde265/de265_internals.{h,cc}` —
   `de265_internals_get_CB_stats` accessor.

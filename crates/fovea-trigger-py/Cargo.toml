@@ -1,0 +1,20 @@
+[package]
+name = "fovea-trigger-py"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "PyO3 bindings for fovea-trigger. Built into the fovea-trigger Python package via maturin."
+
+[lib]
+name = "_fovea_trigger"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+fovea-trigger-core = { path = "../fovea-trigger-core", version = "0.0.1" }
+fovea-trigger-stream = { path = "../fovea-trigger-stream", version = "0.0.1" }
+pyo3 = { version = "0.28", features = ["extension-module"] }
+numpy = "0.28"

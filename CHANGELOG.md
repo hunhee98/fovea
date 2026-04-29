@@ -8,4 +8,4 @@ Versioning is per subproject (see CLAUDE.md → "Versioning & Release").
 ### Added
 - Initial repository scaffolding.
 - Project conventions (CLAUDE.md, evidence rules, reproducibility rules).
-- Subproject roadmap: `fovea-mv` (Phase 1), `fovea-pick` (Phase 2), `fovea-stream` (Phase 3).
+- Subproject roadmap: `fovea-trigger` (Phase 1), `fovea-pick` (Phase 2), `fovea-stream` (Phase 3).

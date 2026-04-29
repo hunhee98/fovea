@@ -14,11 +14,11 @@ Fovea is a layered set of libraries for video → VLM pipelines. Each layer has 
                      └────────────────┬───────────────────┘
                                       │
                      ┌────────────────▼───────────────────┐
-                     │  fovea-mv     (Phase 1, active)    │  Compressed-domain trigger
+                     │  fovea-trigger     (Phase 1, active)    │  Compressed-domain trigger
                      │  ┌──────────────────────────────┐  │
-                     │  │ fovea-mv-stream (sources)    │  │
-                     │  │ fovea-mv-core   (parse + MV) │  │
-                     │  │ fovea-mv-py     (PyO3)       │  │
+                     │  │ fovea-trigger-stream (sources)    │  │
+                     │  │ fovea-trigger-core   (parse + MV) │  │
+                     │  │ fovea-trigger-py     (PyO3)       │  │
                      │  └──────────────────────────────┘  │
                      └────────────────────────────────────┘
                                       │
@@ -27,7 +27,7 @@ Fovea is a layered set of libraries for video → VLM pipelines. Each layer has 
 
 ## Layer roles
 
-### fovea-mv (Phase 1)
+### fovea-trigger (Phase 1)
 
 **Role:** decide which video frames deserve downstream compute.
 **Input:** raw H.264 packets.
@@ -38,7 +38,7 @@ Fovea is a layered set of libraries for video → VLM pipelines. Each layer has 
 ### fovea-pick (Phase 2)
 
 **Role:** select the best frames within a triggered window for a constrained token budget.
-**Input:** events from fovea-mv.
+**Input:** events from fovea-trigger.
 **Output:** ordered list of frames, capped by user-specified budget.
 **Stages:** cheap (MV) → middle (CLIP/DINOv2 diff) → budget-aware selection.
 
@@ -52,8 +52,8 @@ Fovea is a layered set of libraries for video → VLM pipelines. Each layer has 
 ## Why the separation
 
 Each layer is independently useful:
-- A NVR project may use only `fovea-mv` (no VLM).
+- A NVR project may use only `fovea-trigger` (no VLM).
 - A research project may use only `fovea-stream` (frames already picked elsewhere).
-- The VLM cost-reduction pitch is `fovea-mv` + `fovea-pick` together.
+- The VLM cost-reduction pitch is `fovea-trigger` + `fovea-pick` together.
 
-This separation is enforced by crate boundaries — `fovea-mv-core` does not depend on torch/onnx/candle (see `CLAUDE.md` → "Code rules").
+This separation is enforced by crate boundaries — `fovea-trigger-core` does not depend on torch/onnx/candle (see `CLAUDE.md` → "Code rules").

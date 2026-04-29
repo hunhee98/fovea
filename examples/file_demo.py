@@ -5,7 +5,7 @@ Run from the repo root::
     python examples/file_demo.py path/to/clip.mp4
 
 The script does not call any external service. It demonstrates the public
-fovea-mv API end-to-end: open → events → decode → save.
+fovea-trigger API end-to-end: open → events → decode → save.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from fovea_mv import (
+from fovea_trigger import (
     IntervalTrigger,
     MotionTrigger,
     SceneChangeTrigger,
@@ -23,7 +23,7 @@ from fovea_mv import (
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="fovea-mv file demo")
+    parser = argparse.ArgumentParser(description="fovea-trigger file demo")
     parser.add_argument("video", type=Path, help="Path to an H.264 mp4 file")
     parser.add_argument(
         "--max-events", type=int, default=10, help="Stop after N events"

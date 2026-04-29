@@ -10,7 +10,7 @@ Preconditions before publishing:
 - All tests + clippy green on the current branch.
 - A `benchmarks/results/<date>-<slug>.md` file exists for the headline number being claimed.
 - `CHANGELOG.md` has an entry for the new version with: features, fixes, perf deltas, breaking changes.
-- Version tag follows `<subproject>-v<version>` (e.g. `fovea-mv-v0.1.0`).
+- Version tag follows `<subproject>-v<version>` (e.g. `fovea-trigger-v0.1.0`).
 - README / pyproject / Cargo.toml versions agree.
 
 Steps:

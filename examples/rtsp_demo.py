@@ -19,7 +19,7 @@ import sys
 import time
 from pathlib import Path
 
-from fovea_mv import (
+from fovea_trigger import (
     IntervalTrigger,
     MotionTrigger,
     SceneChangeTrigger,
@@ -28,7 +28,7 @@ from fovea_mv import (
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="fovea-mv RTSP demo")
+    parser = argparse.ArgumentParser(description="fovea-trigger RTSP demo")
     parser.add_argument("--rtsp", required=True, help="RTSP URL to open")
     parser.add_argument("--transport", default="tcp", choices=["tcp", "udp"])
     parser.add_argument("--open-timeout-s", type=float, default=5.0)

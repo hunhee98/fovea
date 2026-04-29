@@ -15,7 +15,7 @@ triggers from real object motion. Demonstrated on:
 ## Hardware
 
 - MacBook Air, Apple M3, 16 GB, macOS Darwin 25.3.0 arm64.
-- Build: `cargo build --release` (`fovea-mv-stream` linked against locally
+- Build: `cargo build --release` (`fovea-trigger-stream` linked against locally
   built `vendor/libde265`).
 
 ## Commit
@@ -55,7 +55,7 @@ variable is whether correction / smoothing is enabled.
 Threshold: `1000` (sum of L1 motion magnitudes in pixel units, summed over
 all macroblocks). Picked once, never re-tuned across configs or clips.
 
-Runner: `crates/fovea-mv-stream/examples/global_motion_ab.rs` — counts
+Runner: `crates/fovea-trigger-stream/examples/global_motion_ab.rs` — counts
 fires per config, reports mean / median energy at fire time.
 
 ```sh
@@ -144,7 +144,7 @@ real triggers when camera motion is absent.
 
 ```sh
 # 1. Build
-cargo build --release --example global_motion_ab -p fovea-mv-stream
+cargo build --release --example global_motion_ab -p fovea-trigger-stream
 
 # 2. Generate synthetic clips (requires cctv-sample/sample.mp4 already present)
 bash benchmarks/datasets/synthetic-ptz/generate.sh

@@ -21,10 +21,10 @@ import time
 from pathlib import Path
 from typing import Callable, Iterator, List
 
-from fovea_mv import Stream
+from fovea_trigger import Stream
 
 from .env import RUNS_DIR
-from .sample import FoveaMvConfig, FrameSample, fovea_mv, oracle, uniform_fps
+from .sample import FoveaMvConfig, FrameSample, fovea_trigger, oracle, uniform_fps
 from .vlm import VlmClient, VlmResponse
 
 
@@ -111,7 +111,7 @@ def main() -> int:
     records.append(run_strategy("oracle_1fps", lambda s: oracle(s, args.oracle_interval_ms), args.clip, client))
     records.append(run_strategy("uniform_1fps", lambda s: uniform_fps(s, 1.0), args.clip, client))
     records.append(run_strategy("uniform_0.2fps", lambda s: uniform_fps(s, 0.2), args.clip, client))
-    records.append(run_strategy("fovea_mv", lambda s: fovea_mv(s, fovea_cfg), args.clip, client))
+    records.append(run_strategy("fovea_trigger", lambda s: fovea_trigger(s, fovea_cfg), args.clip, client))
 
     # Persist per-strategy JSON.
     summary = {

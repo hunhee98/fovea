@@ -17,7 +17,7 @@
 - License URL: https://www.pexels.com/license/
 
 ## Use
-- Step 2 development & integration tests for `fovea-mv-stream` MV extraction.
+- Step 2 development & integration tests for `fovea-trigger-stream` MV extraction.
 - Step 5 partial benchmark coverage. Note: portrait orientation (1080×1920), not the typical 1080p (1920×1080) landscape used in canonical 1080p benchmarks. Bench results derived from this clip must declare the orientation.
 
 ## Notes

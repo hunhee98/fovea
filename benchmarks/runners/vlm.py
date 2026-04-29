@@ -1,4 +1,4 @@
-"""Gemini Flash client adapted for the fovea-mv benchmark.
+"""Gemini Flash client adapted for the fovea-trigger benchmark.
 
 Each call:
 - takes an RGB ndarray and a prompt

@@ -24,5 +24,5 @@
   Motion-energy peaks are correspondingly small (max 3910), so the
   motion-trigger threshold for this clip differs from clips at higher
   resolution. A future `motion_energy_per_mb` normalization in
-  fovea-mv-core would let users specify thresholds in resolution-
+  fovea-trigger-core would let users specify thresholds in resolution-
   independent units.

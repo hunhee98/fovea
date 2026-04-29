@@ -12,7 +12,7 @@ from typing import Iterator
 
 import numpy as np
 
-from fovea_mv import (
+from fovea_trigger import (
     IntervalTrigger,
     MotionTrigger,
     SceneChangeTrigger,
@@ -45,7 +45,7 @@ def uniform_fps(stream: Stream, fps: float) -> Iterator[FrameSample]:
         yield FrameSample(ts_us=ev.ts_us, rgb=ev.decode(), trigger_name=ev.trigger_name)
 
 
-# ----- fovea-mv triggers -----
+# ----- fovea-trigger triggers -----
 
 @dataclasses.dataclass
 class FoveaMvConfig:
@@ -55,7 +55,7 @@ class FoveaMvConfig:
     scene_change_threshold: float = 0.6
 
 
-def fovea_mv(stream: Stream, cfg: FoveaMvConfig | None = None) -> Iterator[FrameSample]:
+def fovea_trigger(stream: Stream, cfg: FoveaMvConfig | None = None) -> Iterator[FrameSample]:
     cfg = cfg or FoveaMvConfig()
     triggers = [
         MotionTrigger(cfg.motion_energy_threshold, min_duration_ms=cfg.motion_min_duration_ms),

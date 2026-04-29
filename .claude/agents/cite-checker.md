@@ -28,7 +28,7 @@ A table:
 |-----------------------|-------------------------------------------|----------|-------------------------------|
 | README.md:42          | [He 2018 — arxiv:1712.00636]              | OK       | resolves, abstract supports   |
 | docs/02.papers/...md  | [Liu 2025 — arxiv:2503.13724]             | FLAG     | first author is "Wang", not "Liu" |
-| crates/fovea-mv-core/ | [arxiv 2510.09608]                        | FLAG     | malformed — missing author/year |
+| crates/fovea-trigger-core/ | [arxiv 2510.09608]                        | FLAG     | malformed — missing author/year |
 ```
 
 Then a 2-line summary: total checked / how many flagged / suggested next step.

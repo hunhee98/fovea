@@ -300,7 +300,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
-name = "fovea-mv-core"
+name = "fovea-trigger-core"
 version = "0.0.1"
 dependencies = [
  "anyhow",
@@ -310,17 +310,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "fovea-mv-py"
+name = "fovea-trigger-py"
 version = "0.0.1"
 dependencies = [
- "fovea-mv-core",
- "fovea-mv-stream",
+ "fovea-trigger-core",
+ "fovea-trigger-stream",
  "numpy",
  "pyo3",
 ]
 
 [[package]]
-name = "fovea-mv-stream"
+name = "fovea-trigger-stream"
 version = "0.0.1"
 dependencies = [
  "anyhow",
@@ -328,7 +328,7 @@ dependencies = [
  "criterion",
  "ffmpeg-next",
  "ffmpeg-sys-next",
- "fovea-mv-core",
+ "fovea-trigger-core",
  "libc",
  "proptest",
  "thiserror",

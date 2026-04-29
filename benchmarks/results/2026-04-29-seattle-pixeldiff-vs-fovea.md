@@ -1,15 +1,15 @@
-# 2026-04-29 — Seattle DOT (real CCTV): pixel-diff vs fovea-mv density
+# 2026-04-29 — Seattle DOT (real CCTV): pixel-diff vs fovea-trigger density
 
 Status: smoke comparison on a real production CCTV bitstream, paired
 with `2026-04-29-pixeldiff-vs-fovea-density.md` (academic clip).
-Confirms the fovea-mv vs pixel-diff cost ratio holds — and grows — on
+Confirms the fovea-trigger vs pixel-diff cost ratio holds — and grows — on
 a real municipal-CCTV encoder.
 
 ## TL;DR
 
 On the same M3 8-core box, parsing a 60 s 1080p H.264 clip captured
 from a Seattle DOT public traffic camera (Wowza-fronted municipal
-encoder, GOP ≈ 15, no B-frames, ~3 Mbps): fovea-mv costs **5.3% of
+encoder, GOP ≈ 15, no B-frames, ~3 Mbps): fovea-trigger costs **5.3% of
 one core per realtime stream** vs **15.4% for the pixel-diff
 baseline** — a **2.9× gap**. On the academic `cctv-sample` clip the
 gap was 2.0×; the real-CCTV bitstream is more favorable to the
@@ -52,7 +52,7 @@ behind Wowza). Not a phone camera, not a re-encoded academic clip.
 # Capture (one-time, 22 MB)
 DURATION_S=60 benchmarks/datasets/seattle-dot/download.sh
 
-# fovea-mv side, full sweep
+# fovea-trigger side, full sweep
 .venv/bin/python -m benchmarks.runners.density \
     --source benchmarks/datasets/seattle-dot/data/24_NW_Market_EW_60s.mp4 \
     --streams 1,2,4,8,16 \
@@ -70,7 +70,7 @@ DURATION_S=60 benchmarks/datasets/seattle-dot/download.sh
 
 ## Numbers
 
-### fovea-mv (N=1,2,4,8,16, duration 30 s)
+### fovea-trigger (N=1,2,4,8,16, duration 30 s)
 
 | streams | cpu%(flat) | cpu%(rt est) | throughput × | RSS MB |
 |--------:|-----------:|-------------:|-------------:|-------:|
@@ -97,20 +97,20 @@ DURATION_S=60 benchmarks/datasets/seattle-dot/download.sh
 
 ## Findings
 
-1. **fovea-mv ~3× cheaper than pixel-diff on a real CCTV bitstream**
+1. **fovea-trigger ~3× cheaper than pixel-diff on a real CCTV bitstream**
    at N=1, vs ~2× on the academic clip. The wedge gets larger on real
    CCTV.
 2. **Likely reason**: Seattle's encoder uses a long GOP and zero
-   B-frames, which trims fovea-mv's parse-path work; pixel-diff's
+   B-frames, which trims fovea-trigger's parse-path work; pixel-diff's
    decode cost is ~constant in clip codec choice. The academic clip
    is encoded with default x264 settings (closer GOP, B-frames
-   enabled), which costs fovea-mv a bit more but doesn't help
+   enabled), which costs fovea-trigger a bit more but doesn't help
    pixel-diff.
 3. **RSS gap holds**: ~2.3× more memory per pixel-diff worker
    (155–175 MB vs 64–69 MB).
-4. **Realtime throughput at N=1**: pixel-diff 27.0× vs fovea-mv
+4. **Realtime throughput at N=1**: pixel-diff 27.0× vs fovea-trigger
    18.8× — pixel-diff is faster *flat-out* because OpenCV's H.264
-   decode is multi-threaded inside a single process, while fovea-mv
+   decode is multi-threaded inside a single process, while fovea-trigger
    parses single-threaded. The realtime-equivalent column normalizes
    that out.
 

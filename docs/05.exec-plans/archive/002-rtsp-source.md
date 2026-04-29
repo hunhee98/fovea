@@ -2,7 +2,7 @@
 
 Status: completed 2026-04-28 — branch `feat/mv-step2-h264-extraction`
 Owner: @hunhee98
-Subproject: `fovea-mv` (extends 001)
+Subproject: `fovea-trigger` (extends 001)
 
 ## Outcome
 

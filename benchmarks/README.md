@@ -8,14 +8,14 @@ Benchmarks are first-class in fovea (see `CLAUDE.md` → "Evidence rules"). Ever
 benchmarks/
 ├── datasets/              # download.sh per dataset; no media committed
 ├── baselines/             # non-fovea reference implementations (e.g. pixel-diff)
-├── runners/               # fovea-mv runs
+├── runners/               # fovea-trigger runs
 ├── analysis/              # comparison + plotting
 └── results/               # dated, committed: <YYYY-MM-DD>-<slug>.md
 ```
 
 ## Baselines
 
-Non-fovea-mv comparison points used by the result files:
+Non-fovea-trigger comparison points used by the result files:
 
 - [`baselines/pixel_diff/`](baselines/pixel_diff/density.py) — classical
   decode + grayscale-absdiff motion detector (the Frigate / Viseron /

@@ -1,24 +1,24 @@
-# 004 — fovea-mv positioning + P0 wedge proof
+# 004 — fovea-trigger positioning + P0 wedge proof
 
 Status: in progress — supersedes 003 sequence
 Owner: @hunhee98
-Subproject: `fovea-mv`
+Subproject: `fovea-trigger`
 
 ## Why this plan exists
 
 003 sequenced fovea-stream (Phase 3) as the next major piece on top of an
-unproven Phase 1. That order is wrong. fovea-mv has a working prototype
+unproven Phase 1. That order is wrong. fovea-trigger has a working prototype
 (001) and a multi-stream density smoke run (`benchmarks/results/2026-04-28-density-smoke.md`)
 but no head-to-head numbers against pixel-diff or mv-extractor, no PTZ
 handling, no hero example. Without those, "MV is better than the
 alternatives" is an assertion, not a claim.
 
-004 says: prove the fovea-mv wedge first, then decide whether Phase 2/3
+004 says: prove the fovea-trigger wedge first, then decide whether Phase 2/3
 are the right next investment.
 
 ## Positioning statement
 
-fovea-mv is **a Rust-based multi-channel motion-vector trigger engine for
+fovea-trigger is **a Rust-based multi-channel motion-vector trigger engine for
 the decoder front-end of NVR/VMS systems.** Not a single-camera motion
 detector. Not a research MV extractor.
 
@@ -30,21 +30,21 @@ Target users:
 
 The wedge against existing tools:
 
-| Existing tool | Layer | Gap fovea-mv targets |
+| Existing tool | Layer | Gap fovea-trigger targets |
 |---|---|---|
 | ffmpeg `+export_mvs` | C API, raw MV access | no trigger primitives, no streaming integration, awkward to embed |
 | mv-extractor (LukasBommes) | Python wrapper of ffmpeg | GIL-bound single-stream, file-oriented, no trigger logic |
 | Frigate motion detector | pixel-diff in app | post-decode (decode cost paid up front), no global-motion handling, app-coupled |
 | OpenCV background subtraction | pixel-domain | post-decode, no encoder-side info |
 
-fovea-mv differentiates on four axes simultaneously:
+fovea-trigger differentiates on four axes simultaneously:
 1. **Pre-decode gating** (bitstream → decision, no full decode in idle path).
 2. **Multi-channel concurrent** (Rust + no-GIL).
 3. **Trigger primitives included** (global motion subtraction, spatial
    cluster, threshold + debounce + cooldown — not raw MVs).
 4. **Compressed-domain fusion** — MV alone misses lighting changes, new
    object appearance with no motion match, smoke / fire, and tampering
-   bursts. fovea-mv pairs MV with a second compressed-domain signal
+   bursts. fovea-trigger pairs MV with a second compressed-domain signal
    (intra-block ratio / residual energy, depending on tier) to cover
    those scenarios at bitstream cost. Prior art for the
    MV-plus-residual combination as a useful joint feature:
@@ -79,7 +79,7 @@ numbers.
 ### P0.1 — Pixel-diff baseline runner
 
 **Goal:** A reproducible pixel-diff motion detector implemented at the
-same API surface as fovea-mv triggers, runnable on the same density
+same API surface as fovea-trigger triggers, runnable on the same density
 runner (`benchmarks/runners/density.py`) and the same accuracy bench.
 
 **Why P0:** Without this number, "MV beats pixel-diff" cannot be claimed.
@@ -88,7 +88,7 @@ runner (`benchmarks/runners/density.py`) and the same accuracy bench.
 - `benchmarks/baselines/pixel-diff/` contains a Python runner that
   decodes via PyAV/ffmpeg, computes frame-to-frame absolute diff, fires
   on threshold.
-- Same `--source`, `--streams`, `--duration-s` interface as the fovea-mv
+- Same `--source`, `--streams`, `--duration-s` interface as the fovea-trigger
   density runner.
 - Result file `benchmarks/results/<date>-pixeldiff-density.md` shows
   density curve on the same `cctv-sample` clip and hardware as the
@@ -102,7 +102,7 @@ runner (`benchmarks/runners/density.py`) and the same accuracy bench.
 framing was wrong. Both projects call the same `libavcodec` API
 (`+export_mvs`) under the hood, so single-stream raw-MV-extraction
 throughput is approximately equal — there is no honest "N× faster"
-claim to make at the H.264 level. fovea-mv's actual advantage over
+claim to make at the H.264 level. fovea-trigger's actual advantage over
 mv-extractor is in **what each library exposes**, not how fast each
 one does the same thing.
 
@@ -113,13 +113,13 @@ small-scale latency/throughput sanity check at N=1 to confirm the
 
 **Why P0:** Without it, the README ends up making an unsupported
 "vs mv-extractor" speed claim. With the capability table, the
-comparison stays defensible — fovea-mv covers HEVC, MODE_SKIP
+comparison stays defensible — fovea-trigger covers HEVC, MODE_SKIP
 ratio, CB-stats, glue-free RTSP, and ships trigger primitives;
 mv-extractor returns raw MVs from H.264 only.
 
 **Done when:**
 - `docs/01.architecture/comparison-matrix.md` (or a section in
-  `OVERVIEW.md`) lists fovea-mv vs mv-extractor vs ffmpeg
+  `OVERVIEW.md`) lists fovea-trigger vs mv-extractor vs ffmpeg
   `+export_mvs` direct vs Frigate's pixel-diff motion module across
   these axes:
   - codecs supported (H.264 / HEVC / AV1 / VP9 explicit-error)
@@ -150,11 +150,11 @@ is not bottlenecked by the current Python multiprocessing runner.
 
 **Why P0:** The current density bench is Python-multiprocessing wrapping
 single-threaded Rust streams. To make a fair claim against pixel-diff
-and mv-extractor at scale, fovea-mv needs a Tokio-based scheduler in
-`fovea-mv-stream` that hosts N streams on a shared runtime.
+and mv-extractor at scale, fovea-trigger needs a Tokio-based scheduler in
+`fovea-trigger-stream` that hosts N streams on a shared runtime.
 
 **Done when:**
-- `fovea-mv-stream` exposes a `MultiStream` type that takes N sources
+- `fovea-trigger-stream` exposes a `MultiStream` type that takes N sources
   and yields events from any of them.
 - Density runner has a Rust-native mode that uses `MultiStream` instead
   of forking Python workers.
@@ -173,10 +173,10 @@ motion above a threshold.
 primitive the PTZ FP claim is impossible.
 
 **Done when:**
-- New trigger type in `fovea-mv-core` with rustdoc + unit tests.
-- Python binding in `fovea-mv-py`.
+- New trigger type in `fovea-trigger-core` with rustdoc + unit tests.
+- Python binding in `fovea-trigger-py`.
 - `benchmarks/results/<date>-ptz-fprate.md` shows FP rate on CDnet 2014
-  PTZ category vs pixel-diff baseline. Target: fovea-mv with global-motion
+  PTZ category vs pixel-diff baseline. Target: fovea-trigger with global-motion
   subtraction << pixel-diff.
 
 **Effort:** 3–5 days (including bench).
@@ -199,7 +199,7 @@ claim; without a primitive that does it, the claim is unsupported.
 
 ### P0.6 — Hero example (`examples/mini_nvr.py`)
 
-**Goal:** A ≤ 100-line example that takes N RTSP URLs, runs fovea-mv
+**Goal:** A ≤ 100-line example that takes N RTSP URLs, runs fovea-trigger
 triggers, and on each fire calls a YOLO (CoreML / ONNX) detector, then
 optionally a VLM stub. Demonstrates the cascade in one file.
 
@@ -246,11 +246,11 @@ T1 first because it requires zero changes to the decoder hot path.
 - `de265_internals.h` exposes `de265_internals_get_CB_stats(image, *out)`
   returning `{total_cells, intra_cells, inter_cells, skip_cells, *_pixels,
   slice_type_first}`. **Status: scaffolded 2026-04-29 (commit pending).**
-- Rust FFI binding in `crates/fovea-mv-core` exposes a
+- Rust FFI binding in `crates/fovea-trigger-core` exposes a
   `Frame::cb_stats()` method.
 - New trigger `IntraRatioTrigger { threshold, slice_types }` that fires
   when intra-pixel-ratio in P/B slices exceeds the threshold.
-- Python binding in `fovea-mv-py`.
+- Python binding in `fovea-trigger-py`.
 - Result file `benchmarks/results/<date>-intra-ratio-pilot.md` runs the
   trigger over the cctv-sample clip + a synthetic "lights off / lights
   on" clip + a CDnet "fall" clip and shows the trigger fires on the
@@ -304,7 +304,7 @@ number. UCF-Crime is the standard public source for this.
 **Done when:**
 - `benchmarks/datasets/ucf-crime/download.sh` fetches a 3–4 anomaly-class
   subset (~10 GB peak disk, deletable after run).
-- `benchmarks/runners/recall.py` runs fovea-mv (with global-motion +
+- `benchmarks/runners/recall.py` runs fovea-trigger (with global-motion +
   spatial-cluster triggers) over the subset and reports recall vs the
   dataset's event annotations.
 - Result file `benchmarks/results/<date>-ucf-crime-recall.md` reports

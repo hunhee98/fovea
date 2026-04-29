@@ -6,7 +6,7 @@ file source. Not yet a 0.2 acceptance result — see Limitations.
 ## TL;DR
 
 On Apple M3 8-core, parsing one 30 fps 1080×1920 H.264 stream through
-`fovea-mv` costs ~15% of one core in realtime equivalents. The 8-core
+`fovea-trigger` costs ~15% of one core in realtime equivalents. The 8-core
 box reaches ~1× throughput at N=16, which is the soft ceiling for this
 clip on this hardware in the CPU-only path.
 
@@ -85,7 +85,7 @@ separately in the canonical accuracy bench.
 - **Trigger latency not measured here.** The current Python API yields
   events on trigger fire, not per packet, so wall-clock between fires is
   not packet latency. Latency belongs in a criterion microbench in
-  `crates/fovea-mv-core/benches/`.
+  `crates/fovea-trigger-core/benches/`.
 - **Not an acceptance result.** The 0.2 acceptance bar (≤ 5% per stream
   at N=100 on commodity hardware) is not met by this run, both because
   N=100 was not attempted and because the realtime number is an estimate.

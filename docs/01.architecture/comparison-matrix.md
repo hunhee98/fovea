@@ -3,7 +3,7 @@
 A side-by-side of the OSS choices for "get motion vectors out of an
 encoded video stream and use them to gate downstream work". Captured
 here so the project's README and result-file comparisons can be
-specific about what fovea-mv adds, rather than making vague
+specific about what fovea-trigger adds, rather than making vague
 "X× faster" claims.
 
 Last updated: 2026-04-29.
@@ -20,14 +20,14 @@ analytics layer should look at". They span three architectural tiers:
 - **Compressed-domain raw extraction** — ffmpeg's `+export_mvs`
   flag and the `mv-extractor` Python wrapper around it. Reads MV
   arrays out of `libavcodec` without needing pixel data.
-- **Compressed-domain trigger engine** — fovea-mv. Adds HEVC, intra /
+- **Compressed-domain trigger engine** — fovea-trigger. Adds HEVC, intra /
   skip ratios, global-motion correction, spatial-cluster reasoning,
   RTSP reconnect handling, and a trigger API on top of the same
   `libavcodec` substrate.
 
 ## Matrix
 
-| Capability | ffmpeg `+export_mvs` (direct) | mv-extractor [github](https://github.com/LukasBommes/mv-extractor) | Frigate motion ([github](https://github.com/blakeblackshear/frigate)) | **fovea-mv** |
+| Capability | ffmpeg `+export_mvs` (direct) | mv-extractor [github](https://github.com/LukasBommes/mv-extractor) | Frigate motion ([github](https://github.com/blakeblackshear/frigate)) | **fovea-trigger** |
 |---|---|---|---|---|
 | **Codecs** | | | | |
 | H.264 motion vectors | ✅ via `+export_mvs` | ✅ | n/a (post-decode) | ✅ via `+export_mvs` |
@@ -55,19 +55,19 @@ analytics layer should look at". They span three architectural tiers:
 
 ## What this means in practice
 
-The honest framing — "fovea-mv 빠르다" was the wrong claim:
+The honest framing — "fovea-trigger 빠르다" was the wrong claim:
 
 - **Single-stream H.264 motion-vector extraction throughput** between
-  ffmpeg-direct, mv-extractor, and fovea-mv is approximately equal at
+  ffmpeg-direct, mv-extractor, and fovea-trigger is approximately equal at
   the `libavcodec` API. None of them invent a faster way to read
   the same bytes; the time is dominated by `libavcodec`'s parser, not
   the binding language.
 - **Multi-stream throughput** is where the picture changes. mv-extractor
-  is GIL-bound, so hosting N streams costs N OS processes. fovea-mv's
+  is GIL-bound, so hosting N streams costs N OS processes. fovea-trigger's
   Rust core can host them on a single Tokio runtime once P0.3 lands;
   density-bench numbers from that work are the right place to claim a
   ratio.
-- **What fovea-mv exposes that the others don't** — HEVC, MODE_SKIP
+- **What fovea-trigger exposes that the others don't** — HEVC, MODE_SKIP
   ratio, intra ratio direct from `cb_info`, global-motion correction,
   spatial-cluster trigger, fusion trigger, RTSP reconnect — is the
   positioning. The matrix above is the one we ship in the README.
@@ -75,8 +75,8 @@ The honest framing — "fovea-mv 빠르다" was the wrong claim:
 ## How this matrix is verified
 
 - "✅" entries point to commits or files in this repo. Any reader
-  can clone HEAD, run `cargo test -p fovea-mv-core`, and verify
-  every fovea-mv claim end-to-end.
+  can clone HEAD, run `cargo test -p fovea-trigger-core`, and verify
+  every fovea-trigger claim end-to-end.
 - ffmpeg / mv-extractor / Frigate entries reference upstream
   documentation and source. Where a feature is partial or workaround-
   shaped, the cell uses ⚠️ rather than ✅.
@@ -84,4 +84,4 @@ The honest framing — "fovea-mv 빠르다" was the wrong claim:
   the next cloud-bench session (see 004 P0.2). The result file lives
   at `benchmarks/results/<date>-mv-extractor-N1-sanity.md` once that
   session runs; it is expected to confirm "approximately equal at
-  N=1, fovea-mv pulls ahead at N>1".
+  N=1, fovea-trigger pulls ahead at N>1".

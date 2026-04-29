@@ -10,7 +10,7 @@ different levels of done-ness — please read the status column.
 
 | Crate / Package | Status | What it does |
 |---|---|---|
-| `fovea-mv` | working prototype | Reads H.264 / HEVC motion vectors and fires events on motion / scene change / heartbeat. |
+| `fovea-trigger` | working prototype | Reads H.264 / HEVC motion vectors and fires events on motion / scene change / heartbeat. |
 | `fovea-pick` | planned | Pick K representative frames out of N inside a token budget. Hybrid of MV + image embeddings. |
 | `fovea-stream` | planned | Streaming wrapper around an HF VLM. KV-cache reuse for long videos. |
 
@@ -25,14 +25,14 @@ something changed (motion vectors, intra-coding ratios, frame types,
 encoder MODE_SKIP markers). You can use those signals to drop most
 frames before they reach the VLM.
 
-## What `fovea-mv` is doing differently
+## What `fovea-trigger` is doing differently
 
 The classical OSS motion detector — Frigate, Viseron, Shinobi — decodes
 every frame, sums frame-to-frame absolute pixel differences, fires when
 the sum crosses a threshold. It works, but the decode cost is paid on
 *every* frame, including idle ones.
 
-`fovea-mv` does the gate **before** decode. It reads motion vectors and
+`fovea-trigger` does the gate **before** decode. It reads motion vectors and
 intra / skip block ratios out of the H.264 / HEVC bitstream, runs
 trigger logic on those numbers, and only decodes RGB when the trigger
 fires. The structural claim is that idle hours cost almost nothing.
@@ -51,7 +51,7 @@ grayscale frames, the same pattern Frigate's motion module uses. The
 gap *grows* on real CCTV bitstreams (long GOP, no B-frames) — those
 encoder choices are the case the parse path is cheapest on.
 
-What `fovea-mv` is **not** claiming: faster than mv-extractor or other
+What `fovea-trigger` is **not** claiming: faster than mv-extractor or other
 compressed-domain MV libraries. They call the same `libavcodec` API
 under the hood, so single-stream raw-MV-extraction throughput is
 approximately equal. The advantage is *what each library exposes* —
@@ -80,7 +80,7 @@ for the side-by-side.
   Real-time long-video understanding with KV-cache reuse, **up to 8 FPS
   on a single H100**.
 
-## What's actually working today (`fovea-mv`)
+## What's actually working today (`fovea-trigger`)
 
 - H.264 motion-vector extraction via FFmpeg's `+export_mvs`.
 - HEVC motion-vector extraction via a vendored libde265 plus a small
@@ -89,7 +89,7 @@ for the side-by-side.
   populated during a normal HEVC decode, with zero changes to the
   hot path.
 - File and RTSP sources. RTSP includes timeout / reconnect handling.
-- Trigger primitives in `fovea-mv-core`:
+- Trigger primitives in `fovea-trigger-core`:
   - `MotionTrigger` — energy-threshold trigger with optional
     per-macroblock (resolution-independent) mode, sliding-window
     smoothing, and median global-motion correction for PTZ cameras.
@@ -107,7 +107,7 @@ for the side-by-side.
 - Python bindings via PyO3:
 
   ```python
-  from fovea_mv import Stream, FusionTrigger
+  from fovea_trigger import Stream, FusionTrigger
 
   stream = Stream.from_url(
       "rtsp://USER:PASS@CAMERA_IP:8554/live",

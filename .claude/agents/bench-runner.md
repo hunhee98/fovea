@@ -9,7 +9,7 @@ You are the fovea benchmark runner. You exist to keep heavy benchmark output out
 
 # Inputs the caller will give you
 
-- Which benchmark to run (e.g. "density bench on 4 streams", "cargo bench -p fovea-mv-core mv_aggregate", "compare/run.py on cctv-sample").
+- Which benchmark to run (e.g. "density bench on 4 streams", "cargo bench -p fovea-trigger-core mv_aggregate", "compare/run.py on cctv-sample").
 - Optional: baseline reference (commit SHA, branch, or "skip baseline").
 
 # What you do

@@ -1,4 +1,4 @@
-# 003 — fovea-mv roadmap (deferred items)
+# 003 — fovea-trigger roadmap (deferred items)
 
 Status: superseded 2026-04-29 by `004-positioning.md`. Items remain valid
 as a parking lot; the recommended sequence below is no longer authoritative.
@@ -6,7 +6,7 @@ Owner: @hunhee98
 
 ## What's done before this plan
 
-See 001/002. fovea-mv 0.1.0 prototype works end-to-end on H.264 + HEVC,
+See 001/002. fovea-trigger 0.1.0 prototype works end-to-end on H.264 + HEVC,
 file + RTSP.
 
 ## Tier 1 — small wins
@@ -62,7 +62,7 @@ weeks. Biggest piece. Real differentiator.
 ## Recommended sequence
 
 **Superseded by 004.** The original "Phase 3 next" sequence assumed
-fovea-mv's wedge against pixel-diff, mv-extractor, and PTZ scenes was
+fovea-trigger's wedge against pixel-diff, mv-extractor, and PTZ scenes was
 already proven, which it is not. 004 sequences the wedge proof first
 and explicitly defers Phase 2 / 3 until 0.2 ships.
 
@@ -70,7 +70,7 @@ The original sequence read:
 1. (optional) overnight soak + log analysis
 2. Phase 3 `fovea-stream` — maximum value
 3. Phase 2 `fovea-pick` if/when needed for Phase 3
-4. fovea-mv tier 3 if/when stream density forces it
+4. fovea-trigger tier 3 if/when stream density forces it
 
 Tiers 1, 2, 4 can be slotted opportunistically. See 004 for which items
 were pulled in (P0.3 multi-stream concurrency, parts of Tier 1) and

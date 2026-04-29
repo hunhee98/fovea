@@ -1,11 +1,11 @@
 # Examples
 
-Short scripts that exercise `fovea-mv` end-to-end. Each is independent
+Short scripts that exercise `fovea-trigger` end-to-end. Each is independent
 — pick one that matches your input source.
 
 | Script | Use it when you have… | Demonstrates |
 |---|---|---|
-| [`mini_nvr.py`](mini_nvr.py) | An RTSP camera **or** a local mp4 and you want the canonical "what does fovea-mv buy me" cascade | `FusionTrigger` (motion + intra + skip) → decode only on fire → hand pixels to a stub `process_frame` you replace with your VLM / YOLO call |
+| [`mini_nvr.py`](mini_nvr.py) | An RTSP camera **or** a local mp4 and you want the canonical "what does fovea-trigger buy me" cascade | `FusionTrigger` (motion + intra + skip) → decode only on fire → hand pixels to a stub `process_frame` you replace with your VLM / YOLO call |
 | [`file_demo.py`](file_demo.py) | A local mp4 file | Plain `MotionTrigger` + `IntervalTrigger` + `SceneChangeTrigger` on a file source, optional first-frame PNG dump |
 | [`rtsp_demo.py`](rtsp_demo.py) | An RTSP camera (real device or local MediaMTX loop) | Live `Stream.from_url` with reconnect, prints one line per event, supports `--max-events` / `--max-seconds` |
 | [`live_view.py`](live_view.py) | An RTSP camera + a desktop session | Same as `rtsp_demo` but pops up an OpenCV window with a red overlay on each fire (developer-friendly visualization) |
@@ -30,7 +30,7 @@ stub with your VLM / detector call.
 Each script is short on purpose. The pattern is always:
 
 ```python
-from fovea_mv import Stream, FusionTrigger    # or any other trigger
+from fovea_trigger import Stream, FusionTrigger    # or any other trigger
 
 stream = Stream.from_file("clip.mp4")          # or .from_url("rtsp://...")
 trigger = FusionTrigger("any", motion_threshold=200_000, intra_threshold=0.05)

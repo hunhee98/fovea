@@ -34,9 +34,9 @@ verify-rust: ## cargo check + clippy + test
 	cargo test
 
 .PHONY: verify-py
-verify-py: ## Build PyO3 + run pytest on packages/fovea-mv
-	cd packages/fovea-mv && $(abspath $(MATURIN)) develop
-	$(PY) -m pytest packages/fovea-mv/tests/
+verify-py: ## Build PyO3 + run pytest on packages/fovea-trigger
+	cd packages/fovea-trigger && $(abspath $(MATURIN)) develop
+	$(PY) -m pytest packages/fovea-trigger/tests/
 
 # ---------------------------------------------------------------------------
 # Benchmarks

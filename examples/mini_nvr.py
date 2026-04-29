@@ -2,7 +2,7 @@
 
 Open one RTSP / file source → run the FusionTrigger → only on fire,
 decode the RGB frame and hand it to a downstream model. This is the
-canonical "what does fovea-mv buy me" demo: most frames never get
+canonical "what does fovea-trigger buy me" demo: most frames never get
 decoded, never reach the model. The model only sees what the
 compressed-domain trigger said is worth a second look.
 
@@ -26,14 +26,14 @@ import argparse
 import sys
 import time
 
-from fovea_mv import FusionTrigger, IntervalTrigger, Stream
+from fovea_trigger import FusionTrigger, IntervalTrigger, Stream
 
 
 def process_frame(rgb, ts_s: float, reason: str) -> None:
     """Stand-in for whatever expensive thing wants the pixels.
 
     Replace this with a YOLO inference call, a CLIP embedding, a VLM
-    HTTP request, etc. The point of fovea-mv is that this function is
+    HTTP request, etc. The point of fovea-trigger is that this function is
     invoked only on frames worth processing.
     """
     h, w, _ = rgb.shape

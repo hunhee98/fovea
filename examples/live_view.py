@@ -20,7 +20,7 @@ import time
 import cv2  # type: ignore[import-not-found]
 import numpy as np
 
-from fovea_mv import (
+from fovea_trigger import (
     IntervalTrigger,
     MotionTrigger,
     SceneChangeTrigger,
@@ -67,7 +67,7 @@ def main() -> int:
         SceneChangeTrigger(args.scene_threshold),
     ]
 
-    win = "fovea-mv live"
+    win = "fovea-trigger live"
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(win, info.width // 2, info.height // 2)
 

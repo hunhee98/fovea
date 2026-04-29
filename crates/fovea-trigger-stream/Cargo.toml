@@ -1,0 +1,32 @@
+[package]
+name = "fovea-trigger-stream"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Source adapters (file, RTSP, HTTP) for fovea-trigger. Feeds packets into fovea-trigger-core."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+fovea-trigger-core = { path = "../fovea-trigger-core", version = "0.0.1" }
+thiserror.workspace = true
+tracing.workspace = true
+ffmpeg-next.workspace = true
+ffmpeg-sys-next.workspace = true
+libc = "0.2"
+
+[build-dependencies]
+bindgen = "0.70"
+
+[dev-dependencies]
+anyhow.workspace = true
+criterion.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "ffmpeg_source"
+harness = false

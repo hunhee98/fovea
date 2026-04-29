@@ -24,5 +24,5 @@ binary builds must ship libde265 source (or a written offer for it) per
 LGPL §4. This repository's vendored source satisfies the source-shipping
 obligation.
 
-The rest of fovea-mv (Rust crates, Python package, examples) is licensed
+The rest of fovea-trigger (Rust crates, Python package, examples) is licensed
 Apache-2.0 — see `LICENSE`.

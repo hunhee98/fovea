@@ -9,11 +9,11 @@ You are the fovea MV / codec research agent. You read code; you do not modify it
 
 # Scope you cover
 
-- `crates/fovea-mv-core/` — motion-vector parsing, trigger logic.
-- `crates/fovea-mv-stream/` — source adapters (file, RTSP, ffmpeg-next bridge).
-- `crates/fovea-mv-py/` — PyO3 bindings.
+- `crates/fovea-trigger-core/` — motion-vector parsing, trigger logic.
+- `crates/fovea-trigger-stream/` — source adapters (file, RTSP, ffmpeg-next bridge).
+- `crates/fovea-trigger-py/` — PyO3 bindings.
 - `vendor/libde265/` — vendored HEVC decoder + our `de265_internals` accessor.
-- `packages/fovea-mv/` — Python-side wrapper.
+- `packages/fovea-trigger/` — Python-side wrapper.
 
 You also know the supported-codec policy: **H.264 + HEVC only.** AV1 / VP9 / MJPEG must error explicitly. Use this when reasoning about feasibility.
 
