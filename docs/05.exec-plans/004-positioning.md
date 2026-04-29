@@ -294,6 +294,87 @@ single trigger to point users at.
 
 **Effort:** 3–4 days after P0.8 lands.
 
+### P0.10 — Measure cbf marginal value (HEVC) and motion-only baseline (H.264)
+
+**Re-scoped before any H.264 cbp work.** We have HEVC `cbf_density`
+shipped (T2 in P0.8). Before investing months in extracting an
+equivalent signal from H.264 — which has no public-API path and would
+need either a libavcodec fork or a custom syntax parser — we need
+direct evidence that cbf actually moves the trigger needle. Then,
+and only then, does H.264 cbp become a justified investment.
+
+**Goal:** Measure how much CBF density reduces false-positive rate
+on the trigger task itself (not on a CNN classification task — the
+literature's evidence is mostly action-recognition CNNs, which is
+not what we ship).
+
+**The actual question:** Does adding `cbf_density` as a third axis
+to the FusionTrigger meaningfully reduce false-positive rate on
+challenging surveillance inputs (dynamic background, PTZ panning),
+relative to the same trigger using only motion + intra signals?
+
+**Done when:**
+- `benchmarks/datasets/cdnet-2014/download.sh` pulls the
+  `dynamicBackground`, `PTZ`, and `intermittentObjectMotion`
+  categories (PNG sequences, ~3 GB total).
+- A small re-encode step turns each category's PNG sequence into
+  matched H.264 + HEVC mp4s with controlled encoder settings
+  (libx264/libx265, default preset, fixed CRF), so the comparison is
+  encoder-controlled rather than encoder-confounded.
+- A new runner `benchmarks/runners/cbf_marginal.py` runs each
+  source through three trigger configurations:
+  - `H.264 motion-only` (current path; cbf unavailable)
+  - `HEVC motion-only` (FusionTrigger with cbf disabled)
+  - `HEVC motion + cbf` (FusionTrigger with cbf enabled)
+  and reports per-category TP / FP / per-hour FP rate against the
+  CDnet ground-truth masks.
+- Result file `benchmarks/results/<date>-cbf-marginal.md` lays out
+  the table and draws the explicit decision:
+  - "cbf reduces FP by ≥ 30% on at least one category" → H.264 cbp
+    is worth the investment; proceed to P0.11.
+  - "cbf reduces FP by < 10%" → cbf marginal; H.264 cbp not worth
+    the maintenance burden; H.264 stays motion-only and we ship 0.3
+    that way.
+  - In-between → re-evaluate with a second dataset.
+
+**Hardware caveat:** Re-encoding CDnet PNGs introduces our own
+encoder choices (libx264 / libx265 default), so the absolute FP
+numbers are not portable to a real Hikvision / Axis stream — but
+the *relative* "cbf on vs off" delta is the signal we care about and
+that delta is robust to encoder choice.
+
+**Effort:** 1–2 days for download + re-encode + runner; another
+day for analysis and result write-up.
+
+### P0.11 — H.264 cbp accessor (gated on P0.10)
+
+**Status:** Conditional. Only starts if P0.10 says cbf marginal value
+is real (≥ 30% FP reduction on at least one challenging category).
+
+**Three candidate paths**, evaluated in 002 P0.2 and the surrounding
+discussion:
+1. libavcodec fork with `+export_cbp` flag — initial 1–2 months,
+   *ongoing* maintenance burden every ffmpeg release. Strongest
+   integration but largest follow cost.
+2. openh264 (Cisco, BSD-2) fork. Smaller codebase than ffmpeg, less
+   active mainline, lighter follow burden, similar initial work.
+3. Hybrid syntax parser — keep ffmpeg for demux, write a custom
+   H.264 syntax-only reader (mb_layer + cbp + CABAC subset, no IDCT,
+   no MC, no loop filter). Larger initial investment (~3 months)
+   but zero ongoing maintenance — H.264 spec is frozen.
+
+The 0.3 cycle picks one of these based on: the measured cbf delta
+from P0.10, whether mainline upstream interest exists for option 1,
+and how much of the H.264 syntax we actually need (cbp + mb_type +
+mb_skip is a small fraction of the spec).
+
+Reference path: port openh264's CABAC reader (BSD-2) into Rust as
+the entropy decoder, validate bit-exact against ffmpeg-internal
+ground-truth dumped from `cctv-sample`, then write only the
+mb_layer slice subset that fovea-trigger consumes.
+
+**Effort:** 2–4 months depending on path chosen.
+
 ### P0.7 — Recall@event on UCF-Crime
 
 **Goal:** A reproducible recall measurement on a public anomaly dataset.
@@ -318,6 +399,7 @@ number. UCF-Crime is the standard public source for this.
 |---|---|---|---|
 | CDnet 2014 (PTZ subset) | P0.4 PTZ FP rate | ~1–2 GB | research / non-commercial |
 | CDnet 2014 (dynamicBackground subset) | P0.5 noise FP rate | ~1–2 GB | same |
+| CDnet 2014 (intermittentObjectMotion + the two above) | **P0.10 cbf marginal** | ~3 GB total | same |
 | UCF-Crime (3–4 anomaly classes) | P0.7 recall | ~10 GB | research |
 | Existing `cctv-sample` | P0.1, P0.2, P0.3 density | already present | already cleared |
 | NYC DOT public RTSP cams (yt-dlp save) | optional 24h soak | ~3–5 GB | public stream, research use |
