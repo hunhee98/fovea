@@ -28,7 +28,7 @@ fn fill_one_frame(dec: &mut HevcDecoder, eof_signaled: &mut bool, src: &[u8], cu
         // 1. If we have input bytes, push a chunk before stepping.
         if *cursor < src.len() {
             let end = (*cursor + 64 * 1024).min(src.len());
-            dec.push(&src[*cursor..end]).expect("push");
+            dec.push(&src[*cursor..end], 0).expect("push");
             *cursor = end;
             if *cursor >= src.len() && !*eof_signaled {
                 dec.flush().expect("flush");

@@ -46,7 +46,7 @@ fn main() -> HevcResult<()> {
     eprintln!("bytes: {}", buf.len());
 
     let mut dec = HevcDecoder::new()?;
-    dec.push(&buf)?;
+    dec.push(&buf, 0)?;
     dec.flush()?;
 
     println!(

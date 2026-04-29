@@ -122,14 +122,21 @@ impl HevcDecoder {
     }
 
     /// Push raw bitstream bytes to the decoder. May be called repeatedly.
-    pub fn push(&mut self, data: &[u8]) -> HevcResult<()> {
+    ///
+    /// `pts` is opaque to libde265 — it stores the value verbatim and
+    /// returns it via [`DecodedFrame::pts`] when the matching frame
+    /// emerges. Callers who don't have a meaningful timestamp can pass
+    /// `0`. fovea-mv passes the source's per-packet PTS in
+    /// microseconds so [`crate::MvPacket::ts_us`] is populated for
+    /// HEVC sources just like it is for H.264.
+    pub fn push(&mut self, data: &[u8], pts: i64) -> HevcResult<()> {
         // SAFETY: pointer valid for `len` bytes; libde265 copies internally.
         let err = unsafe {
             ffi::de265_push_data(
                 self.ctx.as_ptr(),
                 data.as_ptr() as *const _,
                 data.len() as _,
-                0,
+                pts,
                 std::ptr::null_mut(),
             )
         };

@@ -437,8 +437,10 @@ impl FfmpegSource {
                     let annexb = hevc_extradata_to_annexb(&extradata).map_err(|msg| {
                         SourceError::Hevc(format!("HEVC extradata parse failed: {msg}"))
                     })?;
-                    dec.push(&annexb).map_err(|e| {
-                        SourceError::Hevc(format!("push hvcC parameter sets: {e}"))
+                    // Parameter-set NALs have no meaningful timestamp;
+                    // libde265 won't surface them as decodable frames.
+                    dec.push(&annexb, 0).map_err(|e| {
+                        SourceError::Hevc(format!("push HEVC parameter sets: {e}"))
                     })?;
                     dec.push_end_of_nal();
                 }
@@ -640,8 +642,21 @@ impl FfmpegSource {
                         None => continue,
                     };
                     let annexb = mp4_to_annexb_if_needed(bytes);
+                    // Convert this packet's PTS into microseconds in
+                    // the stream's time base before handing it to
+                    // libde265 — `de265_push_data` stores whatever
+                    // we pass and returns it unchanged via
+                    // `de265_get_image_PTS` once the matching frame
+                    // is decoded. RTP demuxer surfaces 90 kHz PTS;
+                    // we always normalise to microseconds so
+                    // downstream `MvPacket::ts_us` semantics match
+                    // the H.264 path.
+                    let pkt_pts_us = pts_to_microseconds(
+                        next_pkt.pts(),
+                        self.stream_time_base,
+                    );
                     if let DecoderBackend::Hevc(d) = &mut self.backend {
-                        d.push(&annexb)
+                        d.push(&annexb, pkt_pts_us)
                             .map_err(|e| SourceError::Hevc(format!("{e}")))?;
                         // Each FFmpeg packet is one access unit of NALs.
                         d.push_end_of_nal();
@@ -686,10 +701,11 @@ impl FfmpegSource {
         self.hevc_scratch.extend(frame.pb_info());
 
         self.out_packet.clear();
-        // libde265 PTS pass-through: we never set PTS on push, so this is
-        // 0. v1 leaves ts_us = 0 and lets the user detect HEVC by
-        // inspecting `info().codec`.
-        self.out_packet.ts_us = 0;
+        // libde265 PTS pass-through: we attach per-packet PTS (in
+        // microseconds) on push, libde265 returns it verbatim here.
+        // Falls back to 0 if the source had no PTS (raw .h265 input
+        // without containers, or `AV_NOPTS_VALUE` from the demuxer).
+        self.out_packet.ts_us = frame.pts();
         let any_motion = self.hevc_scratch.iter().any(|c| c.has_motion());
         self.out_packet.frame_type = if any_motion {
             FrameType::P
