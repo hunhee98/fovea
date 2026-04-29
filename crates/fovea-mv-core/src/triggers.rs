@@ -399,6 +399,13 @@ pub struct FusionTrigger {
     /// Intra-coded macroblock fraction threshold in `[0.0, 1.0]`.
     /// `None` skips intra in the decision.
     pub intra_threshold: Option<f32>,
+    /// CBF density threshold (HEVC only) in `[0.0, 1.0]` — fraction of
+    /// macroblocks whose transform unit carried at least one non-zero
+    /// residual coefficient. `None` skips cbf in the decision. As a
+    /// rough starting point: 0.0–0.05 = idle, 0.1–0.3 = light motion,
+    /// 0.4+ = heavy motion / scene change. Tune empirically per
+    /// stream — no single threshold works across encoders.
+    pub cbf_threshold: Option<f32>,
     /// If set and `skip_ratio(packet) >= skip_suppress`, the trigger
     /// returns `None` regardless of other signals. Hard idle gate.
     pub skip_suppress: Option<f32>,
@@ -409,12 +416,13 @@ pub struct FusionTrigger {
 impl FusionTrigger {
     /// Construct an `AnyOf` trigger with no thresholds set. Caller
     /// must enable at least one of `motion_threshold` / `intra_threshold`
-    /// before this fires.
+    /// / `cbf_threshold` before this fires.
     pub fn new(mode: FusionMode) -> Self {
         Self {
             mode,
             motion_threshold: None,
             intra_threshold: None,
+            cbf_threshold: None,
             skip_suppress: None,
             cooldown_us: 100_000,
             last_fire_us: None,
@@ -430,6 +438,14 @@ impl FusionTrigger {
     /// Enable the intra-ratio signal at `threshold` ∈ [0.0, 1.0].
     pub fn with_intra_threshold(mut self, threshold: f32) -> Self {
         self.intra_threshold = Some(threshold);
+        self
+    }
+
+    /// Enable the CBF-density signal at `threshold` ∈ [0.0, 1.0].
+    /// HEVC only — H.264 leaves `cbf_density` at 0.0 and the
+    /// configured threshold will never trip.
+    pub fn with_cbf_threshold(mut self, threshold: f32) -> Self {
+        self.cbf_threshold = Some(threshold);
         self
     }
 
@@ -466,20 +482,25 @@ impl Trigger for FusionTrigger {
 
         let energy = motion_energy(&packet.mvs);
         let intra_r = intra_ratio(packet);
+        let cbf_d = cbf_density(packet);
 
         let motion_ok = self.motion_threshold.map(|t| energy >= t);
         let intra_ok = self.intra_threshold.map(|t| intra_r >= t);
+        let cbf_ok = self.cbf_threshold.map(|t| cbf_d >= t);
 
         // Collect just the signals the caller actually enabled.
-        let mut checks: Vec<bool> = Vec::with_capacity(2);
+        let mut checks: Vec<bool> = Vec::with_capacity(3);
         if let Some(b) = motion_ok {
             checks.push(b);
         }
         if let Some(b) = intra_ok {
             checks.push(b);
         }
+        if let Some(b) = cbf_ok {
+            checks.push(b);
+        }
         if checks.is_empty() {
-            // Neither signal configured — don't fire.
+            // No signal configured — don't fire.
             return None;
         }
 
@@ -505,7 +526,7 @@ impl Trigger for FusionTrigger {
             energy,
             intra_ratio: intra_r,
             skip_ratio: skip_r,
-            cbf_density: cbf_density(packet),
+            cbf_density: cbf_d,
             mv_count: packet.mvs.len() as u32,
         })
     }
@@ -1021,6 +1042,34 @@ mod tests {
         let mut t = FusionTrigger::new(FusionMode::AnyOf);
         let pkt = p_packet(0, vec![mv(200, 0, 0, 0)], 100, 100);
         assert!(t.evaluate(&pkt).is_none());
+    }
+
+    #[test]
+    fn fusion_anyof_fires_on_cbf_alone() {
+        // CBF crosses, motion + intra do not — AnyOf fires.
+        // Models "encoder spent residual bits" without big motion energy.
+        let mut t = FusionTrigger::new(FusionMode::AnyOf)
+            .with_motion_threshold(1_000_000)
+            .with_cbf_threshold(0.3);
+        let mut pkt = p_packet(0, vec![], 0, 100);
+        pkt.cbf_count = 50; // cbf_density = 0.50 ≥ 0.30
+        assert!(t.evaluate(&pkt).is_some());
+    }
+
+    #[test]
+    fn fusion_allof_includes_cbf_in_decision() {
+        // motion + cbf both required. motion crosses but cbf does not
+        // → AllOf rejects.
+        let mut t = FusionTrigger::new(FusionMode::AllOf)
+            .with_motion_threshold(50)
+            .with_cbf_threshold(0.5);
+        let mut pkt = p_packet(0, vec![mv(200, 0, 0, 0)], 0, 100);
+        pkt.cbf_count = 30; // cbf_density = 0.30 < 0.50
+        assert!(t.evaluate(&pkt).is_none(), "AllOf must reject when cbf gate fails");
+        // Now bump cbf above the threshold — should fire.
+        let mut pkt2 = p_packet(200_000, vec![mv(200, 0, 0, 0)], 0, 100);
+        pkt2.cbf_count = 60; // cbf_density = 0.60 ≥ 0.50
+        assert!(t.evaluate(&pkt2).is_some());
     }
 
     #[test]

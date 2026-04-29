@@ -253,6 +253,7 @@ struct PyFusionTrigger {
     mode: RsFusionMode,
     motion_threshold: Option<u64>,
     intra_threshold: Option<f32>,
+    cbf_threshold: Option<f32>,
     skip_suppress: Option<f32>,
     cooldown_ms: u32,
 }
@@ -265,6 +266,7 @@ impl PyFusionTrigger {
         *,
         motion_threshold = None,
         intra_threshold = None,
+        cbf_threshold = None,
         skip_suppress = None,
         cooldown_ms = 100,
     ))]
@@ -272,6 +274,7 @@ impl PyFusionTrigger {
         mode: &str,
         motion_threshold: Option<u64>,
         intra_threshold: Option<f32>,
+        cbf_threshold: Option<f32>,
         skip_suppress: Option<f32>,
         cooldown_ms: u32,
     ) -> PyResult<Self> {
@@ -288,6 +291,7 @@ impl PyFusionTrigger {
             mode,
             motion_threshold,
             intra_threshold,
+            cbf_threshold,
             skip_suppress,
             cooldown_ms,
         })
@@ -299,8 +303,8 @@ impl PyFusionTrigger {
             RsFusionMode::AllOf => "all",
         };
         format!(
-            "FusionTrigger(mode={:?}, motion_threshold={:?}, intra_threshold={:?}, skip_suppress={:?}, cooldown_ms={})",
-            mode, self.motion_threshold, self.intra_threshold, self.skip_suppress, self.cooldown_ms
+            "FusionTrigger(mode={:?}, motion_threshold={:?}, intra_threshold={:?}, cbf_threshold={:?}, skip_suppress={:?}, cooldown_ms={})",
+            mode, self.motion_threshold, self.intra_threshold, self.cbf_threshold, self.skip_suppress, self.cooldown_ms
         )
     }
 }
